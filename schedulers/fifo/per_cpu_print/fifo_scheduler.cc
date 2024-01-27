@@ -101,6 +101,7 @@ void FifoScheduler::TaskNew(FifoTask* task, const Message& msg) {
     stderr, "`TaskNew` message: gtid=%lld; runtime=%lld; runnable=%lld\n",
     payload->gtid, payload->runtime, payload->runnable
   );
+  for(;;) {}
 
   task->seqnum = msg.seqnum();
   task->run_state = FifoTaskState::kBlocked;
