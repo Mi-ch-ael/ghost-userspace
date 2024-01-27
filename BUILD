@@ -715,6 +715,35 @@ cc_library(
 )
 
 cc_binary(
+    name = "fifo_per_cpu_print_agent",
+    srcs = [
+        "schedulers/fifo/per_cpu_print/fifo_agent.cc",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":agent",
+        ":fifo_per_cpu_print_scheduler",
+        "@com_google_absl//absl/debugging:symbolize",
+        "@com_google_absl//absl/flags:parse",
+    ],
+)
+
+cc_library(
+    name = "fifo_per_cpu_print_scheduler",
+    srcs = [
+        "schedulers/fifo/per_cpu_print/fifo_scheduler.cc",
+        "schedulers/fifo/per_cpu_print/fifo_scheduler.h",
+    ],
+    hdrs = [
+        "schedulers/fifo/per_cpu_print/fifo_scheduler.h",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":agent",
+    ],
+)
+
+cc_binary(
     name = "fifo_centralized_agent",
     srcs = [
         "schedulers/fifo/centralized/fifo_agent.cc",
