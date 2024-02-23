@@ -35,6 +35,7 @@ exports_files(["LICENSE"])
 
 compiler_flags = [
     "-Wno-sign-compare",
+    "-std=c++17",
 ]
 
 bpf_linkopts = [
@@ -738,6 +739,12 @@ cc_library(
         "schedulers/fifo/per_cpu_print/fifo_scheduler.h",
     ],
     copts = compiler_flags,
+    linkopts = [
+        "-L/home/ghostling/sambashare/ghost-userspace/ai_toolbox/lib",
+        "-l:libAIToolboxPOMDP.a",
+        "-l:libAIToolboxFMDP.a",
+        "-l:libAIToolboxMDP.a",
+    ],
     deps = [
         ":agent",
     ],

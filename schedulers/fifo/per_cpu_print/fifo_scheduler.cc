@@ -1,6 +1,8 @@
 #include "schedulers/fifo/per_cpu_print/fifo_scheduler.h"
 
 #include <memory>
+#include <iostream>
+#include <AIToolbox/Utils/IO.hpp>
 
 namespace ghost {
 
@@ -19,6 +21,8 @@ FifoScheduler::FifoScheduler(Enclave* enclave, CpuList cpulist,
       default_channel_ = cs->channel.get();
     }
   }
+  AIToolbox::write(std::cout, 42.0);
+  absl::FPrintF(stdout, "AIToolbox works\n");
 }
 
 void FifoScheduler::DumpAllTasks() {
@@ -97,11 +101,6 @@ void FifoScheduler::Migrate(FifoTask* task, Cpu cpu, BarrierToken seqnum) {
 void FifoScheduler::TaskNew(FifoTask* task, const Message& msg) {
   const ghost_msg_payload_task_new* payload =
       static_cast<const ghost_msg_payload_task_new*>(msg.payload());
-  absl::FPrintF(
-    stderr, "`TaskNew` message: gtid=%lld; runtime=%lld; runnable=%lld\n",
-    payload->gtid, payload->runtime, payload->runnable
-  );
-  for(;;) {}
 
   task->seqnum = msg.seqnum();
   task->run_state = FifoTaskState::kBlocked;
