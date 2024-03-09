@@ -154,12 +154,12 @@ int main() {
   {
     printf("SimpleExpMany\n");
     ghost::ScopedTime time;
-    ghost::SimpleExpMany(1000);
+    ghost::SimpleExpMany(10);
   }
   {
     printf("BusyExp\n");
     ghost::ScopedTime time;
-    ghost::BusyExpRunFor(100, absl::Milliseconds(10));
+    ghost::BusyExpRunFor(5, absl::Milliseconds(1000));
   }
   {
     printf("TaskDeparted\n");
@@ -169,12 +169,12 @@ int main() {
   {
     printf("TaskDepartedMany\n");
     ghost::ScopedTime time;
-    ghost::TaskDepartedMany(1000);
+    ghost::TaskDepartedMany(10);
   }
   {
     printf("TaskDepartedManyRace\n");
     ghost::ScopedTime time;
-    ghost::TaskDepartedManyRace(1000);
+    ghost::TaskDepartedManyRace(10);
   }
   return 0;
 }

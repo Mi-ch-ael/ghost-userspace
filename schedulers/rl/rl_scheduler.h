@@ -21,6 +21,8 @@ enum class RlTaskState {
 // For CHECK and friends.
 std::ostream& operator<<(std::ostream& os, const RlTaskState& state);
 
+pid_t pidOf(pid_t tid);
+
 struct RlTask : public Task<> {
   explicit RlTask(Gtid rl_task_gtid, ghost_sw_info sw_info)
       : Task<>(rl_task_gtid, sw_info) {}
@@ -29,6 +31,14 @@ struct RlTask : public Task<> {
   inline bool blocked() const { return run_state == RlTaskState::kBlocked; }
   inline bool queued() const { return run_state == RlTaskState::kQueued; }
   inline bool oncpu() const { return run_state == RlTaskState::kOnCpu; }
+
+  // Updating information read from `/proc` in every callback can turn out 
+  // to be very taxing on performance. One might want to redefine this to
+  // read updates from `/proc/pid` once in a while. For now, this always
+  // returns `true`.
+  bool NeedsInfoUpdate(const Message& msg) const { return true; } 
+
+  pid_t tid() const { return this->gtid.tid(); }
 
   // N.B. _runnable() is a transitory state typically used during runqueue
   // manipulation. It is not expected to be used from task msg callbacks.
@@ -45,9 +55,17 @@ struct RlTask : public Task<> {
   // Whether the last execution was preempted or not.
   bool preempted = false;
 
+  // https://man7.org/linux/man-pages/man5/proc.5.html
+
+  u_long utime = 0;
+  u_long stime = 0;
+  u_long vsize = 0;
+  u_long guest_time = 0;
+
   // A task's priority is boosted on a kernel preemption or a !deferrable
   // wakeup - basically when it may be holding locks or other resources
   // that prevent other tasks from making progress.
+  // TODO: remove this when done with actual implementation.
   bool prio_boost = false;
 };
 
@@ -105,6 +123,8 @@ class RlScheduler : public BasicDispatchScheduler<RlTask> {
     });
     return num_tasks;
   }
+
+  void UpdateTask(RlTask* task, std::ifstream& instream);
 
   static constexpr int kDebugRunqueue = 1;
   static constexpr int kCountAllTasks = 2;

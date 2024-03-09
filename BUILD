@@ -254,6 +254,18 @@ cc_binary(
 )
 
 cc_binary(
+    name = "single_exp",
+    srcs = [
+        "tests/single_exp.cc",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":base",
+        ":ghost",
+    ],
+)
+
+cc_binary(
     name = "cfs_test",
     testonly = 1,
     srcs = [

@@ -2,8 +2,26 @@
 #include "shared/fd_server.h"
 
 #include <memory>
+#include "rl_scheduler.h"
 
 namespace ghost {
+
+pid_t pidOf(pid_t tid) {
+  std::string statusFilePath = "/proc/" + std::to_string(tid) + "/status";
+  std::ifstream statusFile(statusFilePath);
+  std::string line;
+  pid_t pid;
+  while (std::getline(statusFile, line)) {
+    if (line.substr(0, 4) == "Tgid") {
+      std::istringstream iss(line);
+      std::string key;
+      iss >> key >> pid;
+      break;
+    }
+  }
+  statusFile.close();
+  return pid;
+}
 
 RlScheduler::RlScheduler(Enclave* enclave, CpuList cpulist,
                              std::shared_ptr<TaskAllocator<RlTask>> allocator)
@@ -25,9 +43,9 @@ RlScheduler::RlScheduler(Enclave* enclave, CpuList cpulist,
 void RlScheduler::DumpAllTasks() {
   fprintf(stderr, "task        state   cpu\n");
   allocator()->ForEachTask([](Gtid gtid, const RlTask* task) {
-    absl::FPrintF(stderr, "%-12s%-8d%-8d%c%c\n", gtid.describe(),
+    absl::FPrintF(stderr, "%-12s%-8d%-8d%c |%lu|%lu|%lu|%lu\n", gtid.describe(),
                   task->run_state, task->cpu, task->preempted ? 'P' : '-',
-                  task->prio_boost ? 'B' : '-');
+                  task->utime, task->stime, task->guest_time, task->vsize);
     return true;
   });
 }
@@ -95,12 +113,58 @@ void RlScheduler::Migrate(RlTask* task, Cpu cpu, BarrierToken seqnum) {
   enclave()->GetAgent(cpu)->Ping();
 }
 
+void RlScheduler::UpdateTask(RlTask* task, std::ifstream& instream) {
+  const int utime_offset = 13;
+  const int stime_offset = 14;
+  const int guest_time_offset = 42;
+  const int vsize_offset = 22;
+  const int max_offset = std::max(
+    std::max(utime_offset, stime_offset),
+    std::max(guest_time_offset, vsize_offset)
+  );
+  std::string token;
+  for(int i = 0; i <= max_offset; ++i) {
+    instream >> token;
+    switch (i) {
+    case utime_offset:
+      sscanf(token.c_str(), "%lu", &(task->utime));
+      break;
+    case stime_offset:
+      sscanf(token.c_str(), "%lu", &(task->stime));
+      break;
+    case guest_time_offset:
+      sscanf(token.c_str(), "%lu", &(task->guest_time));
+      break;
+    case vsize_offset:
+      sscanf(token.c_str(), "%lu", &(task->vsize));
+      break;
+    default:
+      break;
+    }
+  }
+}
+
 void RlScheduler::TaskNew(RlTask* task, const Message& msg) {
   const ghost_msg_payload_task_new* payload =
       static_cast<const ghost_msg_payload_task_new*>(msg.payload());
 
   task->seqnum = msg.seqnum();
   task->run_state = RlTaskState::kBlocked;
+
+  if (task->NeedsInfoUpdate(msg)) {
+    pid_t tid = Gtid(payload->gtid).tid();
+    pid_t pid = pidOf(tid);
+    std::string stat_file_path = "/proc/" + std::to_string(pid) + "/task/" + std::to_string(tid) + "/stat";
+    absl::FPrintF(stdout, "Reading file %s\n", stat_file_path);
+    std::ifstream statFile(stat_file_path);
+    if (!statFile.is_open()) {
+      absl::FPrintF(stderr, "Failed to open /proc/%d/task/%d/stat\n", pid, tid);
+    } else {
+      this->UpdateTask(task, statFile);
+      absl::FPrintF(stdout, "Updated task\n");
+      statFile.close();
+    }
+  }
 
   if (payload->runnable) {
     task->run_state = RlTaskState::kRunnable;
@@ -110,6 +174,8 @@ void RlScheduler::TaskNew(RlTask* task, const Message& msg) {
     // Wait until task becomes runnable to avoid race between migration
     // and MSG_TASK_WAKEUP showing up on the default channel.
   }
+
+  // this->DumpAllTasks();
 }
 
 void RlScheduler::TaskRunnable(RlTask* task, const Message& msg) {
