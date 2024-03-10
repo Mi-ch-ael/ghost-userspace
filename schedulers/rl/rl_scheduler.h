@@ -124,7 +124,10 @@ class RlScheduler : public BasicDispatchScheduler<RlTask> {
     return num_tasks;
   }
 
+  // Update `task` with stat data from `instream` 
   void UpdateTask(RlTask* task, std::ifstream& instream);
+  // Share `task` via `FdServer` (essentially via a socket)
+  void ShareTask(const RlTask* task);
 
   static constexpr int kDebugRunqueue = 1;
   static constexpr int kCountAllTasks = 2;
@@ -164,6 +167,8 @@ class RlScheduler : public BasicDispatchScheduler<RlTask> {
 
   CpuState cpu_states_[MAX_CPUS];
   Channel* default_channel_ = nullptr;
+
+  int share_counter_ = 0;
 };
 
 std::unique_ptr<RlScheduler> MultiThreadedRlScheduler(Enclave* enclave,

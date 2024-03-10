@@ -2,6 +2,7 @@
 #include "shared/fd_server.h"
 
 #include <memory>
+#include <cstdio>
 #include "rl_scheduler.h"
 
 namespace ghost {
@@ -144,6 +145,33 @@ void RlScheduler::UpdateTask(RlTask* task, std::ifstream& instream) {
   }
 }
 
+void RlScheduler::ShareTask(const RlTask* task) {
+  char const * const filename = "_task";
+  FILE* file = fopen(filename, "w+");
+  CHECK(file != nullptr);
+  int fd = fileno(file);
+  absl::FPrintF(file, "%d %d %d %c %lu %lu %lu %lu\n",
+                task->run_state, task->cpu, task->tid(), (task->preempted ? '1' : '0'),
+                task->utime, task->stime, task->guest_time, task->vsize);
+  fflush(file);
+  absl::FPrintF(stderr, "Wrote task info to %s\n", filename);
+  FdServer fd_server(fd, std::to_string(this->share_counter_++), absl::Milliseconds(20000));
+  absl::StatusOr<std::string> path = fd_server.Init();
+  if(!path.ok()) {
+    std::cerr << "FdServer::Init() failed with error: " << path.status() << "\n";
+    fclose(file);
+  }
+  CHECK(path.ok());
+  absl::FPrintF(stderr, "Serving task data at %s\n", path->c_str());
+  absl::Status status = fd_server.Serve();
+  if(!status.ok()) {
+    std::cerr << "FdServer::Serve() failed with error: " << status << "\n";
+    fclose(file);
+  }
+  CHECK(status.ok());
+  fclose(file);
+}
+
 void RlScheduler::TaskNew(RlTask* task, const Message& msg) {
   const ghost_msg_payload_task_new* payload =
       static_cast<const ghost_msg_payload_task_new*>(msg.payload());
@@ -174,7 +202,7 @@ void RlScheduler::TaskNew(RlTask* task, const Message& msg) {
     // Wait until task becomes runnable to avoid race between migration
     // and MSG_TASK_WAKEUP showing up on the default channel.
   }
-
+  this->ShareTask(task);
   // this->DumpAllTasks();
 }
 
