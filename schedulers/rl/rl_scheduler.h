@@ -127,6 +127,9 @@ class RlScheduler : public BasicDispatchScheduler<RlTask> {
   // Update `task` with stat data from `instream` 
   void UpdateTask(RlTask* task, std::ifstream& instream);
   // Share `task` via `FdServer` (essentially via a socket)
+  // $FDSRV variable MUST be set
+  // To set it, run `source setup.sh` in repository root directory
+  // Note: agent needs root privileges to run, so run `source` as root
   void ShareTask(const RlTask* task);
 
   static constexpr int kDebugRunqueue = 1;

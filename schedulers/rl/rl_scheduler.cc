@@ -3,6 +3,8 @@
 
 #include <memory>
 #include <cstdio>
+#include <cstdlib>
+#include <sstream>
 #include "rl_scheduler.h"
 
 namespace ghost {
@@ -146,30 +148,14 @@ void RlScheduler::UpdateTask(RlTask* task, std::ifstream& instream) {
 }
 
 void RlScheduler::ShareTask(const RlTask* task) {
-  char const * const filename = "_task";
-  FILE* file = fopen(filename, "w+");
-  CHECK(file != nullptr);
-  int fd = fileno(file);
-  absl::FPrintF(file, "%d %d %d %c %lu %lu %lu %lu\n",
-                task->run_state, task->cpu, task->tid(), (task->preempted ? '1' : '0'),
-                task->utime, task->stime, task->guest_time, task->vsize);
-  fflush(file);
-  absl::FPrintF(stderr, "Wrote task info to %s\n", filename);
-  FdServer fd_server(fd, std::to_string(this->share_counter_++), absl::Milliseconds(20000));
-  absl::StatusOr<std::string> path = fd_server.Init();
-  if(!path.ok()) {
-    std::cerr << "FdServer::Init() failed with error: " << path.status() << "\n";
-    fclose(file);
+  std::stringstream command;
+  command << "echo \"" << /* space-separated metrics */
+    task->run_state << " " << task->cpu << " " << task->tid() << 
+    " " << (task->preempted ? '1' : '0') << " " << task->utime << " " << task->stime << 
+    " " << task->guest_time << " " << task->vsize << "\" | $FDSRV " << this->share_counter_++;
+  if (char status = system(command.str().c_str())) {
+    absl::FPrintF(stderr, "Share command failed with status code %d\n", status);
   }
-  CHECK(path.ok());
-  absl::FPrintF(stderr, "Serving task data at %s\n", path->c_str());
-  absl::Status status = fd_server.Serve();
-  if(!status.ok()) {
-    std::cerr << "FdServer::Serve() failed with error: " << status << "\n";
-    fclose(file);
-  }
-  CHECK(status.ok());
-  fclose(file);
 }
 
 void RlScheduler::TaskNew(RlTask* task, const Message& msg) {
