@@ -91,6 +91,10 @@ class RlRq {
 
   bool Empty() const { return Size() == 0; }
 
+  // Dump run_queue contents for sharing via ShareTask
+  // (RL agent trains on this data)
+  const std::deque<RlTask*> dump() const { return this->rq_; }
+
  private:
   mutable absl::Mutex mu_;
   std::deque<RlTask*> rq_ ABSL_GUARDED_BY(mu_);
@@ -130,7 +134,7 @@ class RlScheduler : public BasicDispatchScheduler<RlTask> {
   // $FDSRV variable MUST be set
   // To set it, run `source setup.sh` in repository root directory
   // Note: agent needs root privileges to run, so run `source` as root
-  void ShareTask(const RlTask* task);
+  void ShareTask(const RlTask* task, const char* callback_type);
 
   static constexpr int kDebugRunqueue = 1;
   static constexpr int kCountAllTasks = 2;

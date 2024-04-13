@@ -147,12 +147,25 @@ void RlScheduler::UpdateTask(RlTask* task, std::ifstream& instream) {
   }
 }
 
-void RlScheduler::ShareTask(const RlTask* task) {
-  std::stringstream command;
-  command << "echo \"" << /* space-separated metrics */
-    task->run_state << " " << task->cpu << " " << task->tid() << 
+void add_task_info_to_stream(std::stringstream& command, const RlTask* task) {
+  command << " " << (int)task->run_state << " " << task->cpu << " " <<
     " " << (task->preempted ? '1' : '0') << " " << task->utime << " " << task->stime << 
-    " " << task->guest_time << " " << task->vsize << "\" | $FDSRV " << this->share_counter_++;
+    " " << task->guest_time << " " << task->vsize;
+}
+
+void RlScheduler::ShareTask(const RlTask* task, const char* callback_type) {
+  std::stringstream command;
+  const char begin_command[] = "echo \"";
+  const char end_command[] = "\" | $FDSRV ";
+  command << begin_command << callback_type;
+  add_task_info_to_stream(command, task);
+  if (task->cpu >= 0) {
+    const std::deque<RlTask*> run_queue_content = cpu_state_of(task)->run_queue.dump();
+    for (RlTask* cur_task : run_queue_content) {
+      add_task_info_to_stream(command, cur_task);
+    }
+  }
+  command << end_command << this->share_counter_++;
   if (char status = system(command.str().c_str())) {
     absl::FPrintF(stderr, "Share command failed with status code %d\n", status);
   }
@@ -188,7 +201,7 @@ void RlScheduler::TaskNew(RlTask* task, const Message& msg) {
     // Wait until task becomes runnable to avoid race between migration
     // and MSG_TASK_WAKEUP showing up on the default channel.
   }
-  this->ShareTask(task);
+  this->ShareTask(task, "new");
   // this->DumpAllTasks();
 }
 
