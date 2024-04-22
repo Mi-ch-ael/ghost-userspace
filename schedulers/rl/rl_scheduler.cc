@@ -153,11 +153,11 @@ void add_task_info_to_stream(std::stringstream& command, const RlTask* task) {
     " " << task->guest_time << " " << task->vsize;
 }
 
-void RlScheduler::ShareTask(const RlTask* task, const char* callback_type) {
+void RlScheduler::ShareTask(const RlTask* task, const SentCallbackType callback_type) {
   std::stringstream command;
   const char begin_command[] = "echo \"";
   const char end_command[] = "\" | $FDSRV ";
-  command << begin_command << callback_type;
+  command << begin_command << (int)callback_type;
   add_task_info_to_stream(command, task);
   if (task->cpu >= 0) {
     const std::deque<RlTask*> run_queue_content = cpu_state_of(task)->run_queue.dump();
@@ -201,8 +201,7 @@ void RlScheduler::TaskNew(RlTask* task, const Message& msg) {
     // Wait until task becomes runnable to avoid race between migration
     // and MSG_TASK_WAKEUP showing up on the default channel.
   }
-  this->ShareTask(task, "new");
-  // this->DumpAllTasks();
+  this->ShareTask(task, SentCallbackType::kTaskNew);
 }
 
 void RlScheduler::TaskRunnable(RlTask* task, const Message& msg) {

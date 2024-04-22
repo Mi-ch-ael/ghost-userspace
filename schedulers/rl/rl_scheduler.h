@@ -18,6 +18,12 @@ enum class RlTaskState {
   kOnCpu,     // running on cpu.
 };
 
+// Discretization of callback types sent to Env is done right away.
+// Other metrics should be explicitly discretized if needed.
+enum class SentCallbackType {
+  kTaskNew,
+};
+
 // For CHECK and friends.
 std::ostream& operator<<(std::ostream& os, const RlTaskState& state);
 
@@ -134,7 +140,7 @@ class RlScheduler : public BasicDispatchScheduler<RlTask> {
   // $FDSRV variable MUST be set
   // To set it, run `source setup.sh` in repository root directory
   // Note: agent needs root privileges to run, so run `source` as root
-  void ShareTask(const RlTask* task, const char* callback_type);
+  void ShareTask(const RlTask* task, const SentCallbackType callback_type);
 
   static constexpr int kDebugRunqueue = 1;
   static constexpr int kCountAllTasks = 2;
