@@ -5,3 +5,5 @@ bazel-testlogs
 
 notes.txt
 _task
+.venv/
+.vscode/settings.json

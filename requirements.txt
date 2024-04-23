@@ -1,1 +1,2 @@
 absl-py
+gymnasium==0.29.1
