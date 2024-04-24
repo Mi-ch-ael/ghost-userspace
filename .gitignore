@@ -7,3 +7,4 @@ notes.txt
 _task
 .venv/
 .vscode/settings.json
+**/__pycache__
