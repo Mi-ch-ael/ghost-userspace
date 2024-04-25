@@ -4,7 +4,7 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))
 from environment.observation_parser import LnCapObservationParser
 
-class TestUnitTests(unittest.TestCase):
+class LnCapObservationParserTests(unittest.TestCase):
     def test_reshape_runqueue_length_equal_to_cutoff(self):
         parser = LnCapObservationParser(3, 1, 1)
         metrics = [
@@ -15,7 +15,7 @@ class TestUnitTests(unittest.TestCase):
             0, 1, 0, 0, 0, 0, 828858368, 
         ]
 
-        reshaped_metrics = parser.reshape(metrics)
+        reshaped_metrics = parser._reshape(metrics)
         self.assertEqual(
             reshaped_metrics,
             {
@@ -70,7 +70,7 @@ class TestUnitTests(unittest.TestCase):
             7, 8, 9, 10, 11, 12, 13,
         ]
 
-        reshaped_metrics = parser.reshape(metrics)
+        reshaped_metrics = parser._reshape(metrics)
         self.assertEqual(
             reshaped_metrics,
             {
@@ -106,7 +106,7 @@ class TestUnitTests(unittest.TestCase):
             7, 8, 9, 10, 11, 12, 13,
         ]
 
-        reshaped_metrics = parser.reshape(metrics)
+        reshaped_metrics = parser._reshape(metrics)
         self.assertEqual(
             reshaped_metrics,
             {
@@ -178,7 +178,7 @@ class TestUnitTests(unittest.TestCase):
             ]
         }
 
-        transformed_metrics = parser.transform(reshaped_metrics)
+        transformed_metrics = parser._transform(reshaped_metrics)
         expected_result = {
             "callback_type": 2,
             "task_metrics": {

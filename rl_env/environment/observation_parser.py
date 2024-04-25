@@ -38,7 +38,7 @@ class LnCapObservationParser(ObservationParser):
         self.vsize_cap = float(vsize_cap)
 
 
-    def reshape(self, metrics):
+    def _reshape(self, metrics):
         """
         Reshapes metrics into dictionaries while zero-padding or trimming variable-length data. 
         Reshaping into dictionaries in not strictly necessary and should be avoided
@@ -68,25 +68,25 @@ class LnCapObservationParser(ObservationParser):
         return result
     
 
-    def cap(self, task_metrics_dict):
+    def _cap(self, task_metrics_dict):
         task_metrics_dict["utime"] = ln_capped(task_metrics_dict["utime"], self.time_cap)
         task_metrics_dict["stime"] = ln_capped(task_metrics_dict["stime"], self.time_cap)
         task_metrics_dict["guest_time"] = ln_capped(task_metrics_dict["guest_time"], self.time_cap)
         task_metrics_dict["vsize"] = ln_capped(task_metrics_dict["vsize"], self.vsize_cap)
 
 
-    def transform(self, reshaped_metrics):
+    def _transform(self, reshaped_metrics):
         """
         Transforms individual metrics (in this case — by taking a logarithm and capping the result).
         """
-        self.cap(reshaped_metrics["task_metrics"])
+        self._cap(reshaped_metrics["task_metrics"])
         for task_metrics_dict in reshaped_metrics["runqueue"]:
-            self.cap(task_metrics_dict)
+            self._cap(task_metrics_dict)
         return reshaped_metrics
     
 
     def parse(self, metrics):
-        reshaped_metrics = self.reshape(metrics)
-        transformed_metrics = self.transform(reshaped_metrics)
+        reshaped_metrics = self._reshape(metrics)
+        transformed_metrics = self._transform(reshaped_metrics)
         return transformed_metrics
 
