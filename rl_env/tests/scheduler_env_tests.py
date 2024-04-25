@@ -3,6 +3,7 @@ import numpy as np
 import os
 import sys
 import unittest.mock
+import struct
 sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))
 import gymnasium
 import environment
@@ -15,6 +16,7 @@ class SchedulerEnvTests(unittest.TestCase):
         self.assertIs(sched_environment.render_mode, None)
         self.assertEqual(sched_environment.unwrapped.share_counter, 0)
         self.assertEqual(sched_environment.unwrapped.actual_runqueue_length, 0)
+        self.assertEqual(sched_environment.unwrapped.socket_port, 14014)
         self.assertEqual(sched_environment.unwrapped.parser.runqueue_cutoff_length, 8)
         self.assertEqual(sched_environment.unwrapped.parser.time_cap, 16)
         self.assertEqual(sched_environment.unwrapped.parser.vsize_cap, 16)
@@ -48,10 +50,12 @@ class SchedulerEnvTests(unittest.TestCase):
             runqueue_cutoff_length=5,
             time_ln_cap=14,
             vsize_ln_cap=17,
+            socket_port=9090,
         )
         self.assertIs(sched_environment.render_mode, None)
         self.assertEqual(sched_environment.unwrapped.share_counter, 0)
         self.assertEqual(sched_environment.unwrapped.actual_runqueue_length, 0)
+        self.assertEqual(sched_environment.unwrapped.socket_port, 9090)
         self.assertEqual(sched_environment.unwrapped.parser.runqueue_cutoff_length, 5)
         self.assertEqual(sched_environment.unwrapped.parser.time_cap, 14)
         self.assertEqual(sched_environment.unwrapped.parser.vsize_cap, 17)
@@ -207,6 +211,31 @@ class SchedulerEnvTests(unittest.TestCase):
         
         with self.assertRaises(NotImplementedError):
             sched_environment.reset(seed=None, options={"restart": True})
+
+    @unittest.mock.patch('socket.socket')
+    def test_get_raw_metrics(self, mock_socket):
+        mock_socket_instance = unittest.mock.Mock()
+        mock_socket.return_value = mock_socket_instance     
+        mock_conn_instance = unittest.mock.Mock()
+        mock_conn_instance.recv.side_effect = [
+            struct.pack('!I', 15),  # The length of the sequence (15 integers)
+            struct.pack('!15L', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15) # Sequence
+        ]
+        mock_socket_instance.accept.return_value = (mock_conn_instance, ('127.0.0.1', 14014))
+        
+        sched_environment = SchedulerEnv()
+        result = sched_environment._get_raw_metrics()
+
+        self.assertEqual(result, [i for i in range(1, 16)])
+        self.assertEqual(sched_environment.actual_runqueue_length, 1)
+        
+        mock_socket_instance.bind.assert_called_with(('localhost', 14014))
+        mock_socket_instance.listen.assert_called_once()
+        mock_socket_instance.accept.assert_called_once()
+        mock_conn_instance.recv.assert_any_call(4)
+        mock_conn_instance.recv.assert_any_call(15 * 8)
+        mock_conn_instance.close.assert_called_once()
+        mock_socket_instance.close.assert_called_once()
 
 
 if __name__ == "__main__":

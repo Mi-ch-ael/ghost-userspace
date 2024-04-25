@@ -1,5 +1,7 @@
 import gymnasium
 from gymnasium import spaces
+import socket
+import struct
 from environment.observation_parser import LnCapObservationParser
 from environment.scheduler_spaces import generate_zeroed_sample
 
@@ -13,6 +15,7 @@ class SchedulerEnv(gymnasium.Env):
             runqueue_cutoff_length=8, 
             time_ln_cap=16, 
             vsize_ln_cap=16,
+            socket_port=14014,
         ):
         self.observation_space = spaces.Dict({
             # Number of ghOSt scheduler callback (i.e. event) that triggered data transfer
@@ -43,12 +46,33 @@ class SchedulerEnv(gymnasium.Env):
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
 
+        self.socket_port = socket_port
         self.share_counter = 0
         self.parser = LnCapObservationParser(runqueue_cutoff_length, time_ln_cap, vsize_ln_cap)
         self.actual_runqueue_length = 0
 
     def _get_raw_metrics(self):
-        raise NotImplementedError("Methods requiring actual communication are not implemented yet")
+        socket_host = "localhost"
+        metrics_per_task = len(self.parser.task_metrics)
+        connection = None
+        metrics_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            metrics_socket.bind((socket_host, self.socket_port))
+            metrics_socket.listen(1)
+            connection, address = metrics_socket.accept()
+            print(f"Connected by address: {address}")
+            bytes_per_metric = 8
+            length_data = connection.recv(4)
+            length = struct.unpack('!I', length_data)[0]
+            assert (length - 1 - metrics_per_task) % metrics_per_task == 0
+            self.actual_runqueue_length = (length - 1 - metrics_per_task) // metrics_per_task
+            sequence_data = connection.recv(length * bytes_per_metric)
+            sequence = struct.unpack(f'!{length}L', sequence_data)
+            return list(sequence)
+        finally:
+            metrics_socket.close()
+            connection and connection.close()
+
 
     def _send_action(self, action):
         raise NotImplementedError("Methods requiring actual communication are not implemented yet")
