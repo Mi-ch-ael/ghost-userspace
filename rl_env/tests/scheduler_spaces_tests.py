@@ -30,6 +30,10 @@ class SchedulerSpacesTests(unittest.TestCase):
             {
                 "space": spaces.Box(low=np.array([-1, -2]), high=np.array([1, 2]), dtype=np.float32),
                 "expected": np.zeros((2,), dtype=np.float32)
+            },
+            {
+                "space": spaces.Box(low=0, high=7, shape=(1,), dtype=np.float32),
+                "expected": 0.0
             }
         ]
 

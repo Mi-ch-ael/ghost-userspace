@@ -72,7 +72,9 @@ class SchedulerEnv(gymnasium.Env):
         """
         super().reset(seed=seed)
         if options and options["restart"]:
-            # try to restart the scheduler (it is running as root, so this need to run as root too!)
+            """try to restart the scheduler (it is running as root, so this need to run as root too!)
+            Maybe getting SchedulerEnv to control scheduler's lifetime entirely with another
+            constructor parameter is better. Would need `close()` method then."""
             raise NotImplementedError("Restart behavior is yet to be implemented")
         raw_metrics = self._get_raw_metrics()
         observation = self.parser.parse(raw_metrics)
