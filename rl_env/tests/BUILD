@@ -32,6 +32,17 @@ py_test(
 )
 
 py_test(
+    name = "integration_tests",
+    srcs = [
+        "integration_tests.py",
+    ],
+    deps = [
+        "//rl_env/environment:environment",
+    ],
+    size = "small",
+)
+
+py_test(
     name = "all_tests",
     srcs = [
         "all_tests.py",

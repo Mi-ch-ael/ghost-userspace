@@ -60,14 +60,13 @@ class SchedulerEnv(gymnasium.Env):
             metrics_socket.bind((socket_host, self.socket_port))
             metrics_socket.listen(1)
             connection, address = metrics_socket.accept()
-            print(f"Connected by address: {address}")
-            bytes_per_metric = 8
-            length_data = connection.recv(4)
+            print(f"SchedulerEnv._get_raw_metrics: Connected by address: {address}")
+            length_data = connection.recv(struct.calcsize('!I'))
             length = struct.unpack('!I', length_data)[0]
             assert (length - 1 - metrics_per_task) % metrics_per_task == 0
             self.actual_runqueue_length = (length - 1 - metrics_per_task) // metrics_per_task
-            sequence_data = connection.recv(length * bytes_per_metric)
-            sequence = struct.unpack(f'!{length}L', sequence_data)
+            sequence_data = connection.recv(length * struct.calcsize('!Q'))
+            sequence = struct.unpack(f'!{length}Q', sequence_data)
             return list(sequence)
         finally:
             metrics_socket.close()

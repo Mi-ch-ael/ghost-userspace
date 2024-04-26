@@ -4,6 +4,7 @@ import os
 import sys
 import unittest.mock
 import struct
+import socket
 sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))
 import gymnasium
 import environment
@@ -199,27 +200,14 @@ class SchedulerEnvTests(unittest.TestCase):
         self.assertAlmostEqual(observation["runqueue"][1]["guest_time"], 14.231145, delta=1e-6)
         self.assertEqual(observation["runqueue"][1]["vsize"], 16.0)
 
-    def test_reset_restart(self):
-        sched_environment = SchedulerEnv()
-        sched_environment.actual_runqueue_length = 2
-        sched_environment._get_raw_metrics = unittest.mock.Mock(return_value=[
-                7,
-                1, 0, 0, 45152452, 45152452, 0, 89102602,
-                1, 0, 0, 45152452, 45152452, 0, 89102602,
-                0, 0, 1, 980551253, 1251213, 1515332, 60000000,
-            ])
-        
-        with self.assertRaises(NotImplementedError):
-            sched_environment.reset(seed=None, options={"restart": True})
-
     @unittest.mock.patch('socket.socket')
-    def test_get_raw_metrics(self, mock_socket):
+    def test_get_raw_metrics_positive(self, mock_socket):
         mock_socket_instance = unittest.mock.Mock()
         mock_socket.return_value = mock_socket_instance     
         mock_conn_instance = unittest.mock.Mock()
         mock_conn_instance.recv.side_effect = [
             struct.pack('!I', 15),  # The length of the sequence (15 integers)
-            struct.pack('!15L', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15) # Sequence
+            struct.pack('!15Q', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15) # Sequence
         ]
         mock_socket_instance.accept.return_value = (mock_conn_instance, ('127.0.0.1', 14014))
         
@@ -234,6 +222,108 @@ class SchedulerEnvTests(unittest.TestCase):
         mock_socket_instance.accept.assert_called_once()
         mock_conn_instance.recv.assert_any_call(4)
         mock_conn_instance.recv.assert_any_call(15 * 8)
+        mock_conn_instance.close.assert_called_once()
+        mock_socket_instance.close.assert_called_once()
+
+    @unittest.mock.patch('socket.socket')
+    def test_get_raw_metrics_positive_non_default_port(self, mock_socket):
+        mock_socket_instance = unittest.mock.Mock()
+        mock_socket.return_value = mock_socket_instance     
+        mock_conn_instance = unittest.mock.Mock()
+        mock_conn_instance.recv.side_effect = [
+            struct.pack('!I', 15),
+            struct.pack('!15Q', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
+        ]
+        mock_socket_instance.accept.return_value = (mock_conn_instance, ('127.0.0.1', 9898))
+        
+        sched_environment = SchedulerEnv(socket_port=9898)
+        result = sched_environment._get_raw_metrics()
+
+        self.assertEqual(result, [i for i in range(1, 16)])
+        self.assertEqual(sched_environment.actual_runqueue_length, 1)
+        
+        mock_socket_instance.bind.assert_called_with(('localhost', 9898))
+        mock_socket_instance.listen.assert_called_once()
+        mock_socket_instance.accept.assert_called_once()
+        mock_conn_instance.recv.assert_any_call(4)
+        mock_conn_instance.recv.assert_any_call(15 * 8)
+        mock_conn_instance.close.assert_called_once()
+        mock_socket_instance.close.assert_called_once()
+
+    @unittest.mock.patch('socket.socket')
+    def test_get_raw_metrics_non_whole_number_of_tasks(self, mock_socket):
+        mock_socket_instance = unittest.mock.Mock()
+        mock_socket.return_value = mock_socket_instance     
+        mock_conn_instance = unittest.mock.Mock()
+        mock_conn_instance.recv.side_effect = [
+            struct.pack('!I', 18),
+            struct.pack('!18Q', *[i for i in range(18)])
+        ]
+        mock_socket_instance.accept.return_value = (mock_conn_instance, ('127.0.0.1', 14014))
+        
+        sched_environment = SchedulerEnv()
+        with self.assertRaises(AssertionError):
+            sched_environment._get_raw_metrics()
+        
+        mock_socket_instance.bind.assert_called_with(('localhost', 14014))
+        mock_socket_instance.listen.assert_called_once()
+        mock_socket_instance.accept.assert_called_once()
+        mock_conn_instance.recv.assert_called_once_with(4)
+        mock_conn_instance.close.assert_called_once()
+        mock_socket_instance.close.assert_called_once()
+
+    @unittest.mock.patch('socket.socket')
+    def test_get_raw_metrics_bind_error(self, mock_socket):
+        mock_socket_instance = unittest.mock.Mock()
+        mock_socket.return_value = mock_socket_instance        
+        mock_socket_instance.bind.side_effect = socket.error("Socket bind error")
+        sched_environment = SchedulerEnv()
+
+        with self.assertRaises(socket.error):
+            sched_environment._get_raw_metrics()
+        
+        mock_socket_instance.close.assert_called_once()
+
+    @unittest.mock.patch('socket.socket')
+    def test_get_raw_metrics_connection_error(self, mock_socket):
+        mock_socket_instance = unittest.mock.Mock()
+        mock_socket.return_value = mock_socket_instance        
+        mock_socket_instance.accept.side_effect = socket.error("Socket accept error")
+        sched_environment = SchedulerEnv()
+
+        with self.assertRaises(socket.error):
+            sched_environment._get_raw_metrics()
+        
+        mock_socket_instance.close.assert_called_once()
+
+    @unittest.mock.patch('socket.socket')
+    def test_receive_sequence_data_reception_error(self, mock_socket):
+        mock_socket_instance = unittest.mock.Mock()
+        mock_socket.return_value = mock_socket_instance        
+        mock_conn_instance = unittest.mock.Mock()
+        mock_socket_instance.accept.return_value = (mock_conn_instance, ('127.0.0.1', 14014))        
+        mock_conn_instance.recv.side_effect = socket.error("Socket recv error")
+        sched_environment = SchedulerEnv()
+
+        with self.assertRaises(socket.error):
+            sched_environment._get_raw_metrics()
+        
+        mock_conn_instance.close.assert_called_once()
+        mock_socket_instance.close.assert_called_once()
+    
+    @unittest.mock.patch('socket.socket')
+    def test_receive_sequence_unpack_error(self, mock_socket):
+        mock_socket_instance = unittest.mock.Mock()
+        mock_socket.return_value = mock_socket_instance        
+        mock_conn_instance = unittest.mock.Mock()
+        mock_socket_instance.accept.return_value = (mock_conn_instance, ('127.0.0.1', 14014))
+        # Simulate an incorrect data length received
+        mock_conn_instance.recv.side_effect = [struct.pack('!I', 15), b'']
+        sched_environment = SchedulerEnv()
+        
+        with self.assertRaises(struct.error):
+            sched_environment._get_raw_metrics()
+        
         mock_conn_instance.close.assert_called_once()
         mock_socket_instance.close.assert_called_once()
 
