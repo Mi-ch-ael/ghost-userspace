@@ -63,6 +63,7 @@ class SchedulerEnv(gymnasium.Env):
             print(f"SchedulerEnv._get_raw_metrics: Connected by address: {address}")
             length_data = connection.recv(struct.calcsize('!I'))
             length = struct.unpack('!I', length_data)[0]
+            print(f"SchedulerEnv._get_raw_metrics: unpacked length: {length}")
             assert (length - 1 - metrics_per_task) % metrics_per_task == 0
             self.actual_runqueue_length = (length - 1 - metrics_per_task) // metrics_per_task
             sequence_data = connection.recv(length * struct.calcsize('!Q'))

@@ -136,10 +136,7 @@ class RlScheduler : public BasicDispatchScheduler<RlTask> {
 
   // Update `task` with stat data from `instream` 
   void UpdateTask(RlTask* task, std::ifstream& instream);
-  // Share `task` via `FdServer` (essentially via a socket)
-  // $FDSRV variable MUST be set
-  // To set it, run `source setup.sh` in repository root directory
-  // Note: agent needs root privileges to run, so run `source` as root
+  // Share `task` via a socket
   void ShareTask(const RlTask* task, const SentCallbackType callback_type);
 
   static constexpr int kDebugRunqueue = 1;
@@ -181,7 +178,7 @@ class RlScheduler : public BasicDispatchScheduler<RlTask> {
   CpuState cpu_states_[MAX_CPUS];
   Channel* default_channel_ = nullptr;
 
-  int share_counter_ = 0;
+  int target_socket_port_ = 14014;
 };
 
 std::unique_ptr<RlScheduler> MultiThreadedRlScheduler(Enclave* enclave,

@@ -1,10 +1,10 @@
 #include "schedulers/rl/rl_scheduler.h"
-#include "shared/fd_server.h"
 
-#include <memory>
-#include <cstdio>
-#include <cstdlib>
-#include <sstream>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <cstring>
+#include <vector>
 #include "rl_scheduler.h"
 
 namespace ghost {
@@ -147,28 +147,65 @@ void RlScheduler::UpdateTask(RlTask* task, std::ifstream& instream) {
   }
 }
 
-void add_task_info_to_stream(std::stringstream& command, const RlTask* task) {
-  command << " " << (int)task->run_state << " " << task->cpu << " " <<
-    " " << (task->preempted ? '1' : '0') << " " << task->utime << " " << task->stime << 
-    " " << task->guest_time << " " << task->vsize;
+#if __BIG_ENDIAN__
+# define htonll(x) (x)
+#else
+# define htonll(x) (((uint64_t)htonl((x) & 0xFFFFFFFF) << 32) | htonl((x) >> 32))
+#endif
+
+void SendSequence(std::vector<uint64_t>& sequence, uint16_t port) {
+  int sock = socket(AF_INET, SOCK_STREAM, 0);
+  if (sock == -1) {
+    absl::FPrintF(stderr, "Failed to create socket. Skipped event. Awaiting termination.\n");
+    return;
+  }
+  sockaddr_in server_addr;
+  server_addr.sin_family = AF_INET;
+  server_addr.sin_port = htons(port);
+  inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
+  if (connect(sock, (sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
+    absl::FPrintF(stderr, "Failed to connect. Skipped event. Awaiting termination.\n");
+    close(sock);
+    return;
+  }
+
+  uint32_t length = htonl(sequence.size());
+  if (send(sock, &length, sizeof(length), 0) == -1) {
+    absl::FPrintF(stderr, "Failed to send. Skipped event. Awaiting termination.\n");
+    close(sock);
+    return;
+  }    
+  for (int i = 0; i < sequence.size(); ++i) {
+    uint64_t net_num = htonll(sequence[i]);
+    sequence[i] = net_num;
+  }
+  if (send(sock, sequence.data(), sequence.size() * sizeof(uint64_t), 0) == -1) {
+    absl::FPrintF(stderr, "Failed to send. Skipped event. Awaiting termination.\n");
+  }
+  close(sock);
+}
+
+void AddTaskInfoToMetrics(const RlTask* task, std::vector<uint64_t>& vec) {
+  vec.push_back((uint64_t)task->run_state);
+  vec.push_back((uint64_t)task->cpu);
+  vec.push_back((uint64_t)task->preempted);
+  vec.push_back((uint64_t)task->utime);
+  vec.push_back((uint64_t)task->stime);
+  vec.push_back((uint64_t)task->guest_time);
+  vec.push_back((uint64_t)task->vsize);
 }
 
 void RlScheduler::ShareTask(const RlTask* task, const SentCallbackType callback_type) {
-  std::stringstream command;
-  const char begin_command[] = "echo \"";
-  const char end_command[] = "\" | $FDSRV ";
-  command << begin_command << (int)callback_type;
-  add_task_info_to_stream(command, task);
+  std::vector<uint64_t> metrics = std::vector<uint64_t>();
+  metrics.push_back((uint64_t)callback_type);
+  AddTaskInfoToMetrics(task, metrics);
   if (task->cpu >= 0) {
     const std::deque<RlTask*> run_queue_content = cpu_state_of(task)->run_queue.dump();
     for (RlTask* cur_task : run_queue_content) {
-      add_task_info_to_stream(command, cur_task);
+      AddTaskInfoToMetrics(cur_task, metrics);
     }
   }
-  command << end_command << this->share_counter_++;
-  if (char status = system(command.str().c_str())) {
-    absl::FPrintF(stderr, "Share command failed with status code %d\n", status);
-  }
+  SendSequence(metrics, this->target_socket_port_);
 }
 
 void RlScheduler::TaskNew(RlTask* task, const Message& msg) {
