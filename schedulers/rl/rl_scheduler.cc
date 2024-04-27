@@ -285,6 +285,7 @@ void RlScheduler::TaskNew(RlTask* task, const Message& msg) {
   }
   this->ShareTask(task, SentCallbackType::kTaskNew);
   uint32_t action;
+  // TODO: add a timeout to improve resiliency in case environment fails.
   int status = ReceiveAction(this->listen_socket_port_, &action);
   if (!status) {
     absl::FPrintF(stderr, "Received action #%u\n", action);

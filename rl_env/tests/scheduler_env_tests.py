@@ -15,7 +15,6 @@ class SchedulerEnvTests(unittest.TestCase):
     def test_environment_creation_default_parameters(self):
         sched_environment = gymnasium.make('rl_env/SchedulerEnv-v0')
         self.assertIs(sched_environment.render_mode, None)
-        self.assertEqual(sched_environment.unwrapped.share_counter, 0)
         self.assertEqual(sched_environment.unwrapped.actual_runqueue_length, 0)
         self.assertEqual(sched_environment.unwrapped.socket_port, 14014)
         self.assertEqual(sched_environment.unwrapped.scheduler_port, 17213)
@@ -56,7 +55,6 @@ class SchedulerEnvTests(unittest.TestCase):
             scheduler_port=12345,
         )
         self.assertIs(sched_environment.render_mode, None)
-        self.assertEqual(sched_environment.unwrapped.share_counter, 0)
         self.assertEqual(sched_environment.unwrapped.actual_runqueue_length, 0)
         self.assertEqual(sched_environment.unwrapped.socket_port, 9090)
         self.assertEqual(sched_environment.unwrapped.scheduler_port, 12345)

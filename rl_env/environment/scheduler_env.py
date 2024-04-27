@@ -49,7 +49,6 @@ class SchedulerEnv(gymnasium.Env):
 
         self.socket_port = socket_port
         self.scheduler_port = scheduler_port
-        self.share_counter = 0
         self.parser = LnCapObservationParser(runqueue_cutoff_length, time_ln_cap, vsize_ln_cap)
         self.actual_runqueue_length = 0
 

@@ -5,6 +5,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))
 from environment.observation_parser import LnCapObservationParser
 
 class LnCapObservationParserTests(unittest.TestCase):
+    maxDiff = None
     def test_reshape_runqueue_length_equal_to_cutoff(self):
         parser = LnCapObservationParser(3, 1, 1)
         metrics = [
@@ -29,7 +30,7 @@ class LnCapObservationParserTests(unittest.TestCase):
                     "guest_time": 0,
                     "vsize": 31512800,
                 },
-                "runqueue": [
+                "runqueue": (
                     {
                         "run_state": 0,
                         "cpu_num": 5,
@@ -57,7 +58,7 @@ class LnCapObservationParserTests(unittest.TestCase):
                         "guest_time": 0,
                         "vsize": 828858368,
                     },
-                ]
+                )
             }
         )
 
@@ -84,7 +85,7 @@ class LnCapObservationParserTests(unittest.TestCase):
                     "guest_time": 5,
                     "vsize": 6,
                 },
-                "runqueue": [
+                "runqueue": (
                     {
                         "run_state": 0,
                         "cpu_num": 1,
@@ -94,7 +95,7 @@ class LnCapObservationParserTests(unittest.TestCase):
                         "guest_time": 5,
                         "vsize": 6,
                     },
-                ]
+                )
             }
         )
 
@@ -120,7 +121,7 @@ class LnCapObservationParserTests(unittest.TestCase):
                     "guest_time": 5,
                     "vsize": 6,
                 },
-                "runqueue": [
+                "runqueue": (
                     {
                         "run_state": 7,
                         "cpu_num": 8,
@@ -139,7 +140,7 @@ class LnCapObservationParserTests(unittest.TestCase):
                         "guest_time": 0,
                         "vsize": 0,
                     },
-                ]
+                )
             }
         )
 
@@ -156,7 +157,7 @@ class LnCapObservationParserTests(unittest.TestCase):
                 "guest_time": 66,
                 "vsize": 77,
             },
-            "runqueue": [
+            "runqueue": (
                 {
                     "run_state": 77,
                     "cpu_num": 66,
@@ -175,7 +176,7 @@ class LnCapObservationParserTests(unittest.TestCase):
                     "guest_time": 3,
                     "vsize": 0,
                 }
-            ]
+            )
         }
 
         transformed_metrics = parser._transform(reshaped_metrics)
@@ -190,7 +191,7 @@ class LnCapObservationParserTests(unittest.TestCase):
                 "guest_time": 4.0,
                 "vsize": 3.0,
             },
-            "runqueue": [
+            "runqueue": (
                 {
                     "run_state": 77,
                     "cpu_num": 66,
@@ -209,7 +210,7 @@ class LnCapObservationParserTests(unittest.TestCase):
                     "guest_time": 1.0986123,
                     "vsize": 0.0,
                 }
-            ]
+            )
         }
         self.assertEqual(transformed_metrics["callback_type"], expected_result["callback_type"])
         self.assertEqual(transformed_metrics["callback_type"], reshaped_metrics["callback_type"])
@@ -236,9 +237,6 @@ class LnCapObservationParserTests(unittest.TestCase):
                 reshaped_metrics["runqueue"][i][key],
                 delta=1e-6,
             )
-        
-
-
 
 
 if __name__ == "__main__":
