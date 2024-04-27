@@ -153,6 +153,51 @@ void RlScheduler::UpdateTask(RlTask* task, std::ifstream& instream) {
 # define htonll(x) (((uint64_t)htonl((x) & 0xFFFFFFFF) << 32) | htonl((x) >> 32))
 #endif
 
+int HandleClient(int client_socket, uint32_t* buf) {
+  uint32_t num;
+  ssize_t received_bytes = recv(client_socket, &num, sizeof(num), 0);
+  if (received_bytes != sizeof(num)) {
+    absl::FPrintF(stderr, "Failed to receive data. Skipped event. Awaiting termination.\n");
+    close(client_socket);
+    return 1;
+  }
+  *buf = ntohl(num);
+  close(client_socket);
+  return 0;
+}
+
+int ReceiveAction(uint16_t port, uint32_t* buf) {
+  int sock = socket(AF_INET, SOCK_STREAM, 0);
+  if (sock == -1) {
+    absl::FPrintF(stderr, "Failed to create socket. Skipped event. Awaiting termination.\n");
+    return 1;
+  }
+  sockaddr_in server_addr;
+  server_addr.sin_family = AF_INET;
+  server_addr.sin_port = htons(port);
+  server_addr.sin_addr.s_addr = INADDR_ANY;
+  if (bind(sock, (sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
+    absl::FPrintF(stderr, "Failed to bind socket. Skipped event. Awaiting termination.\n");
+    close(sock);
+    return 1;
+  }
+  if (listen(sock, 1) == -1) {
+    absl::FPrintF(stderr, "Failed to listen on socket. Skipped event. Awaiting termination.\n");
+    close(sock);
+    return 1;
+  }
+
+  absl::FPrintF(stdout, "Listening on port %u\n", port);
+  int client_socket = accept(sock, nullptr, nullptr);
+  close(sock);
+  if (client_socket == -1) {
+    absl::FPrintF(stderr, "Failed to accept connection. Skipped event. Awaiting termination.\n");
+    return 1;
+  }
+  int status = HandleClient(client_socket, buf);
+  return status;
+}
+
 void SendSequence(std::vector<uint64_t>& sequence, uint16_t port) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   if (sock == -1) {
@@ -239,6 +284,11 @@ void RlScheduler::TaskNew(RlTask* task, const Message& msg) {
     // and MSG_TASK_WAKEUP showing up on the default channel.
   }
   this->ShareTask(task, SentCallbackType::kTaskNew);
+  uint32_t action;
+  int status = ReceiveAction(this->listen_socket_port_, &action);
+  if (!status) {
+    absl::FPrintF(stderr, "Received action #%u\n", action);
+  }
 }
 
 void RlScheduler::TaskRunnable(RlTask* task, const Message& msg) {

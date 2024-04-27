@@ -18,6 +18,7 @@ class SchedulerEnvTests(unittest.TestCase):
         self.assertEqual(sched_environment.unwrapped.share_counter, 0)
         self.assertEqual(sched_environment.unwrapped.actual_runqueue_length, 0)
         self.assertEqual(sched_environment.unwrapped.socket_port, 14014)
+        self.assertEqual(sched_environment.unwrapped.scheduler_port, 17213)
         self.assertEqual(sched_environment.unwrapped.parser.runqueue_cutoff_length, 8)
         self.assertEqual(sched_environment.unwrapped.parser.time_cap, 16)
         self.assertEqual(sched_environment.unwrapped.parser.vsize_cap, 16)
@@ -52,11 +53,13 @@ class SchedulerEnvTests(unittest.TestCase):
             time_ln_cap=14,
             vsize_ln_cap=17,
             socket_port=9090,
+            scheduler_port=12345,
         )
         self.assertIs(sched_environment.render_mode, None)
         self.assertEqual(sched_environment.unwrapped.share_counter, 0)
         self.assertEqual(sched_environment.unwrapped.actual_runqueue_length, 0)
         self.assertEqual(sched_environment.unwrapped.socket_port, 9090)
+        self.assertEqual(sched_environment.unwrapped.scheduler_port, 12345)
         self.assertEqual(sched_environment.unwrapped.parser.runqueue_cutoff_length, 5)
         self.assertEqual(sched_environment.unwrapped.parser.time_cap, 14)
         self.assertEqual(sched_environment.unwrapped.parser.vsize_cap, 17)
@@ -327,6 +330,67 @@ class SchedulerEnvTests(unittest.TestCase):
         mock_conn_instance.close.assert_called_once()
         mock_socket_instance.close.assert_called_once()
 
+    @unittest.mock.patch('socket.socket')
+    def test_send_action_positive(self, mock_socket_class):
+        mock_socket_instance = unittest.mock.Mock()
+        mock_socket_class.return_value = mock_socket_instance
+        value = 42
+        port = 12345
+        sched_environment = SchedulerEnv(scheduler_port=port)
+
+        sched_environment._send_action(value)
+
+        mock_socket_instance.connect.assert_called_once_with(("localhost", port))
+        packed_data = struct.pack('!I', value)
+        mock_socket_instance.sendall.assert_called_once_with(packed_data)
+        mock_socket_instance.close.assert_called_once()
+
+    @unittest.mock.patch('socket.socket')
+    def test_send_action_positive_default_port(self, mock_socket_class):
+        mock_socket_instance = unittest.mock.Mock()
+        mock_socket_class.return_value = mock_socket_instance
+        value = 42
+        port = 17213
+        sched_environment = SchedulerEnv()
+
+        sched_environment._send_action(value)
+
+        mock_socket_instance.connect.assert_called_once_with(("localhost", port))
+        packed_data = struct.pack('!I', value)
+        mock_socket_instance.sendall.assert_called_once_with(packed_data)
+        mock_socket_instance.close.assert_called_once()
+
+    @unittest.mock.patch('socket.socket')
+    def test_send_connection_error(self, mock_socket_class):
+        mock_socket_instance = unittest.mock.Mock()
+        mock_socket_instance.connect.side_effect = socket.error
+        mock_socket_class.return_value = mock_socket_instance
+        value = 42
+        port = 12345
+        sched_environment = SchedulerEnv(scheduler_port=port)
+
+        with self.assertRaises(socket.error):
+            sched_environment._send_action(value)
+
+        mock_socket_instance.connect.assert_called_once_with(("localhost", port))
+        mock_socket_instance.sendall.assert_not_called()
+        mock_socket_instance.close.assert_called_once()
+
+    @unittest.mock.patch('socket.socket')
+    def test_send_integer_send_failure(self, mock_socket_class):
+        mock_socket_instance = unittest.mock.Mock()
+        mock_socket_instance.sendall.side_effect = socket.error
+        mock_socket_class.return_value = mock_socket_instance
+        value = 42
+        port = 12345
+        sched_environment = SchedulerEnv(scheduler_port=port)
+
+        with self.assertRaises(socket.error):
+            sched_environment._send_action(value)
+
+        mock_socket_instance.connect.assert_called_once_with(("localhost", port))
+        mock_socket_instance.sendall.assert_called_once_with(struct.pack('!I', value))
+        mock_socket_instance.close.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main()

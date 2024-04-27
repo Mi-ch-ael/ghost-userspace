@@ -178,7 +178,8 @@ class RlScheduler : public BasicDispatchScheduler<RlTask> {
   CpuState cpu_states_[MAX_CPUS];
   Channel* default_channel_ = nullptr;
 
-  int target_socket_port_ = 14014;
+  uint16_t target_socket_port_ = 14014;
+  uint16_t listen_socket_port_ = 17213;
 };
 
 std::unique_ptr<RlScheduler> MultiThreadedRlScheduler(Enclave* enclave,

@@ -96,6 +96,37 @@ class IntegrationTests(unittest.TestCase):
         result = result_queue.get()
         if isinstance(result, Exception):
             self.fail(f"SchedulerEnv raised an exception: {result}")
+
+
+class TestIntegrationSendAction(unittest.TestCase):
+    def setUp(self):
+        self.server_host = '127.0.0.1'
+        self.server_port = 17213
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.bind((self.server_host, self.server_port))
+        self.server_socket.listen(1)
+        self.server_thread = threading.Thread(target=self.server_handler)
+        self.server_thread.start()
+
+    def tearDown(self):
+        self.server_socket.close()
+        self.server_thread.join()
+
+    def server_handler(self):
+        client_socket, _ = self.server_socket.accept()
+        try:
+            data = client_socket.recv(4)
+            self.received_value = struct.unpack('!I', data)[0]
+        finally:
+            client_socket.close()
+
+    def test_send_action_positive(self):
+        sched_environment = SchedulerEnv()
+        value_to_send = 42
+        sched_environment._send_action(value_to_send)
+        self.server_thread.join()
+
+        self.assertEqual(self.received_value, value_to_send)
     
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ class SchedulerEnv(gymnasium.Env):
             time_ln_cap=16, 
             vsize_ln_cap=16,
             socket_port=14014,
+            scheduler_port=17213,
         ):
         self.observation_space = spaces.Dict({
             # Number of ghOSt scheduler callback (i.e. event) that triggered data transfer
@@ -47,6 +48,7 @@ class SchedulerEnv(gymnasium.Env):
         self.render_mode = render_mode
 
         self.socket_port = socket_port
+        self.scheduler_port = scheduler_port
         self.share_counter = 0
         self.parser = LnCapObservationParser(runqueue_cutoff_length, time_ln_cap, vsize_ln_cap)
         self.actual_runqueue_length = 0
@@ -75,7 +77,14 @@ class SchedulerEnv(gymnasium.Env):
 
 
     def _send_action(self, action):
-        raise NotImplementedError("Methods requiring actual communication are not implemented yet")
+        socket_host = "localhost"
+        action_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            action_socket.connect((socket_host, self.scheduler_port))
+            packed_number = struct.pack('!I', action)
+            action_socket.sendall(packed_number)
+        finally:
+            action_socket.close()
 
     def step(self, action):
         if action >= self.actual_runqueue_length:
