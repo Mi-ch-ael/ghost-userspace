@@ -282,13 +282,13 @@ void RlScheduler::TaskNew(RlTask* task, const Message& msg) {
   } else {
     // Wait until task becomes runnable to avoid race between migration
     // and MSG_TASK_WAKEUP showing up on the default channel.
-  }
-  this->ShareTask(task, SentCallbackType::kTaskNew);
-  uint32_t action;
-  int status = ReceiveAction(this->listen_socket_port_, &action);
-  if (!status) {
-    absl::FPrintF(stderr, "Received action #%u\n", action);
-  }
+  } 
+  // this->ShareTask(task, SentCallbackType::kTaskNew);
+  // uint32_t action;
+  // int status = ReceiveAction(this->listen_socket_port_, &action);
+  // if (!status) {
+  //   absl::FPrintF(stderr, "Received action #%u\n", action);
+  // }
 }
 
 void RlScheduler::TaskRunnable(RlTask* task, const Message& msg) {
@@ -303,15 +303,30 @@ void RlScheduler::TaskRunnable(RlTask* task, const Message& msg) {
   // tasks to make progress.
   task->prio_boost = !payload->deferrable;
 
+  Cpu assigned_cpu = AssignCpu(task);
+  GHOST_DPRINT(3, stderr, "Assigned CPU %d for task %s\n", assigned_cpu.id(), task->gtid.describe());
+  if (task->cpu == assigned_cpu.id()) {
+    GHOST_DPRINT(3, stderr, "CPU %d was already assigned to task %s; only adding the task to runqueue.",
+      task->cpu, task->gtid.describe());
+    CpuState* cs = cpu_state_of(task);
+    cs->run_queue.Enqueue(task);
+    return;
+  }
   if (task->cpu < 0) {
     // There cannot be any more messages pending for this task after a
     // MSG_TASK_WAKEUP (until the agent puts it oncpu) so it's safe to
     // migrate.
-    Cpu cpu = AssignCpu(task);
-    Migrate(task, cpu, msg.seqnum());
-  } else {
-    CpuState* cs = cpu_state_of(task);
-    cs->run_queue.Enqueue(task);
+    GHOST_DPRINT(3, stderr, "No CPU was assigned to task %s; migrating to assigned CPU.",
+      task->gtid.describe());
+    Migrate(task, assigned_cpu, msg.seqnum());
+    return;
+  }
+  if (task->cpu >= 0) {
+    GHOST_DPRINT(3, stderr, "Task %s already has an assigned CPU %d; changing CPU.\n", 
+      task->gtid.describe(), task->cpu);
+    task->cpu = -1;
+    Migrate(task, assigned_cpu, msg.seqnum());
+    return;
   }
 }
 
@@ -347,12 +362,24 @@ void RlScheduler::TaskYield(RlTask* task, const Message& msg) {
 
   TaskOffCpu(task, /*blocked=*/false, payload->from_switchto);
 
-  CpuState* cs = cpu_state_of(task);
-  cs->run_queue.Enqueue(task);
-
-  if (payload->from_switchto) {
-    Cpu cpu = topology()->cpu(payload->cpu);
-    enclave()->GetAgent(cpu)->Ping();
+  CHECK(task->cpu >= 0);
+  Cpu assigned_cpu = AssignCpu(task);
+  GHOST_DPRINT(3, stderr, "Assigned CPU %d for task %s\n", assigned_cpu.id(), task->gtid.describe());
+  if (task->cpu == assigned_cpu.id()) {
+    GHOST_DPRINT(3, stderr, "CPU %d was already assigned to task %s; only adding the task to runqueue.",
+      task->cpu, task->gtid.describe());
+    CpuState* cs = cpu_state_of(task);
+    cs->run_queue.Enqueue(task);
+    if (payload->from_switchto) {
+      Cpu cpu = topology()->cpu(payload->cpu);
+      enclave()->GetAgent(cpu)->Ping();
+    }
+  }
+  else {
+    GHOST_DPRINT(3, stderr, "Task %s already has an assigned CPU %d; changing CPU.\n", 
+      task->gtid.describe(), task->cpu);
+    task->cpu = -1;
+    Migrate(task, assigned_cpu, msg.seqnum());
   }
 }
 

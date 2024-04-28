@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <sched.h>
 
 #include <atomic>
 #include <memory>
@@ -23,7 +24,11 @@ struct ScopedTime {
 void SimpleExp() {
   printf("\nStarting simple worker\n");
   GhostThread t(GhostThread::KernelScheduler::kGhost, [] {
-    fprintf(stderr, "hello world!\n");
+    fprintf(stderr, "hello world! Yielding now...\n");
+    // fprintf(stderr, "Waiting for input: ");
+    // scanf("[^\n]");
+    sched_yield();
+    fprintf(stderr, "I'm back!\n");
     absl::SleepFor(absl::Milliseconds(10));
     fprintf(stderr, "fantastic nap!\n");
     // Verify that a ghost thread implicitly clones itself in the ghost
