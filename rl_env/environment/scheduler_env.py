@@ -1,7 +1,9 @@
 import gymnasium
 from gymnasium import spaces
+from threading import Lock
 import socket
 import struct
+from threads.stoppable_thread import StoppableThread
 from environment.observation_parser import LnCapObservationParser
 from environment.scheduler_spaces import generate_zeroed_sample
 
@@ -12,54 +14,77 @@ class SchedulerEnv(gymnasium.Env):
             self, 
             render_mode=None, 
             cpu_num=1, 
-            runqueue_cutoff_length=8, 
+            runqueue_cutoff_length=8,
+            max_prev_events_stored=2,
             time_ln_cap=16, 
             vsize_ln_cap=16,
             socket_port=14014,
             scheduler_port=17213,
         ):
-        self.observation_space = spaces.Dict({
-            # Number of ghOSt scheduler callback (i.e. event) that triggered data transfer
-            "callback_type": spaces.Discrete(8),
-            # Information about the task with which the event occurred
-            "task_metrics": spaces.Dict({
-                "run_state": spaces.Discrete(4),
-                "cpu_num": spaces.Discrete(cpu_num),
-                "preempted": spaces.Discrete(2),
-                "utime": spaces.Box(0, time_ln_cap, shape=(1,)),
-                "stime": spaces.Box(0, time_ln_cap, shape=(1,)),
-                "guest_time": spaces.Box(0, time_ln_cap, shape=(1,)),
-                "vsize": spaces.Box(0, vsize_ln_cap, shape=(1,)),
-            }),
-            # Information about tasks in the run queue
-            "runqueue": spaces.Tuple([spaces.Dict({
-                "run_state": spaces.Discrete(4),
-                "cpu_num": spaces.Discrete(cpu_num),
-                "preempted": spaces.Discrete(2),
-                "utime": spaces.Box(0, time_ln_cap, shape=(1,)),
-                "stime": spaces.Box(0, time_ln_cap, shape=(1,)),
-                "guest_time": spaces.Box(0, time_ln_cap, shape=(1,)),
-                "vsize": spaces.Box(0, vsize_ln_cap, shape=(1,)),
-            })] * runqueue_cutoff_length)
-        })
+        self.observation_space = spaces.Tuple([
+            spaces.Dict({
+                # Number of ghOSt scheduler callback (i.e. event) that triggered data transfer
+                "callback_type": spaces.Discrete(8),
+                # Information about the task with which the event occurred
+                "task_metrics": spaces.Dict({
+                    "run_state": spaces.Discrete(4),
+                    "cpu_num": spaces.Discrete(cpu_num),
+                    "preempted": spaces.Discrete(2),
+                    "utime": spaces.Box(0, time_ln_cap, shape=(1,)),
+                    "stime": spaces.Box(0, time_ln_cap, shape=(1,)),
+                    "guest_time": spaces.Box(0, time_ln_cap, shape=(1,)),
+                    "vsize": spaces.Box(0, vsize_ln_cap, shape=(1,)),
+                }),
+                # Information about tasks in the run queue
+                "runqueue": spaces.Tuple([spaces.Dict({
+                    "run_state": spaces.Discrete(4),
+                    "cpu_num": spaces.Discrete(cpu_num),
+                    "preempted": spaces.Discrete(2),
+                    "utime": spaces.Box(0, time_ln_cap, shape=(1,)),
+                    "stime": spaces.Box(0, time_ln_cap, shape=(1,)),
+                    "guest_time": spaces.Box(0, time_ln_cap, shape=(1,)),
+                    "vsize": spaces.Box(0, vsize_ln_cap, shape=(1,)),
+                })] * runqueue_cutoff_length)
+            })
+        ] * (max_prev_events_stored + 1))
         self.action_space = spaces.Discrete(runqueue_cutoff_length)
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
 
+        self.socket_host = "localhost"
         self.socket_port = socket_port
         self.scheduler_port = scheduler_port
         self.share_counter = 0
         self.parser = LnCapObservationParser(runqueue_cutoff_length, time_ln_cap, vsize_ln_cap)
         self.actual_runqueue_length = 0
+        self.max_prev_events_stored = max_prev_events_stored
+        self.accumulated_metrics = []
+        self.accumulated_metrics_lock = Lock()
+        self.observations_ready = False
+        self.background_collector_thread = StoppableThread(target=self._listen_for_updates, args=())
+
+    def _start_collector(self):
+        """Start background collector that waits for metrics."""
+        self.background_collector_thread.start()
+
+    def _finalize(self):
+        """Perform pre-shutdown tasks. For now, just stop background listening thread,
+        but may be used for dumping learning statistics, etc."""
+        self.background_collector_thread.stop()
+
+    def _listen_for_updates(self):
+        metrics = self._get_raw_metrics()
+        # Get 1st number: actionable or not
+        # If not, grab lock and add to accumulated_metrics
+        # If yes, add to accumulated_metrics and signal to main thread
 
     def _get_raw_metrics(self):
-        socket_host = "localhost"
         metrics_per_task = len(self.parser.task_metrics)
         connection = None
         metrics_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            metrics_socket.bind((socket_host, self.socket_port))
+            metrics_socket.bind((self.socket_host, self.socket_port))
             metrics_socket.listen(1)
             connection, address = metrics_socket.accept()
             print(f"SchedulerEnv._get_raw_metrics: Connected by address: {address}")
@@ -77,10 +102,9 @@ class SchedulerEnv(gymnasium.Env):
 
 
     def _send_action(self, action):
-        socket_host = "localhost"
         action_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            action_socket.connect((socket_host, self.scheduler_port))
+            action_socket.connect((self.socket_host, self.scheduler_port))
             packed_number = struct.pack('!I', action)
             action_socket.sendall(packed_number)
         finally:

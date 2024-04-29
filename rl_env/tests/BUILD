@@ -27,6 +27,7 @@ py_test(
     ],
     deps = [
         "//rl_env/environment:environment",
+        "//rl_env/threads:threads",
     ],
     size = "small",
 )
@@ -38,6 +39,7 @@ py_test(
     ],
     deps = [
         "//rl_env/environment:environment",
+        "//rl_env/threads:threads",
     ],
     size = "small",
 )
@@ -49,6 +51,7 @@ py_test(
     ],
     deps = [
         "//rl_env/environment:environment",
+        "//rl_env/threads:threads",
     ],
     size = "small",
 )

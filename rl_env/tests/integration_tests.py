@@ -7,8 +7,10 @@ import struct
 import gymnasium
 import os
 import sys
+import time
 sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))
 from environment.scheduler_env import SchedulerEnv
+from threads.stoppable_thread import StoppableThread
 
 def send_sequence(sequence, host='localhost', port=14014):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -21,6 +23,17 @@ def send_sequence(sequence, host='localhost', port=14014):
 
 
 class IntegrationTests(unittest.TestCase):
+    def test_example_usage_of_stoppable_thread(self):
+        def payload():
+            time.sleep(0.1)
+        stoppable_thread = StoppableThread(target=payload, args=(), name="test-thread")
+        stoppable_thread.start()
+        time.sleep(0.2)
+        self.assertEqual(stoppable_thread.is_alive(), True)
+        stoppable_thread.stop()
+        time.sleep(0.2)
+        self.assertEqual(stoppable_thread.is_alive(), False)
+
     def test_get_raw_metrics_positive(self):
         sequence_to_send = [i for i in range(15)]
         port = 14014
