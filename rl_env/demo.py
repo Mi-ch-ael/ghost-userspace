@@ -27,7 +27,7 @@ def use_environment(env, verbose = True):
     observation, _ = env.reset()
     assert observation[-1]["callback_type"] == 0
     if verbose:
-        print(f"Observation from step (task metrics): {observation[-1]['task_metrics']}")
+        print(f"Observation from reset (task metrics): {observation[-1]['task_metrics']}")
     observation, reward, terminated, truncated, _ = env.step(0)
     assert reward == 0.0
     assert terminated == False

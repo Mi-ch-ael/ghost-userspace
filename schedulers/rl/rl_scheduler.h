@@ -116,7 +116,7 @@ class RlScheduler : public BasicDispatchScheduler<RlTask> {
  public:
   explicit RlScheduler(Enclave* enclave, CpuList cpulist,
                          std::shared_ptr<TaskAllocator<RlTask>> allocator);
-  ~RlScheduler() final {}
+  ~RlScheduler() final;
 
   void Schedule(const Cpu& cpu, const StatusWord& sw);
 
@@ -139,6 +139,8 @@ class RlScheduler : public BasicDispatchScheduler<RlTask> {
     });
     return num_tasks;
   }
+
+  int InitServerSocket();
 
   // Update `task` with stat data from `instream` 
   void UpdateTask(RlTask* task, std::ifstream& instream);
@@ -190,6 +192,7 @@ class RlScheduler : public BasicDispatchScheduler<RlTask> {
 
   uint16_t target_socket_port_ = 14014;
   uint16_t listen_socket_port_ = 17213;
+  int server_socket_;
 };
 
 std::unique_ptr<RlScheduler> MultiThreadedRlScheduler(Enclave* enclave,

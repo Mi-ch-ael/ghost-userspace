@@ -41,6 +41,15 @@ RlScheduler::RlScheduler(Enclave* enclave, CpuList cpulist,
       default_channel_ = cs->channel.get();
     }
   }
+
+  CHECK_EQ(InitServerSocket(), 0);
+}
+
+RlScheduler::~RlScheduler() {
+  if (server_socket_ != -1) {
+    close(server_socket_);
+    server_socket_ = -1;
+  }
 }
 
 void RlScheduler::DumpAllTasks() {
@@ -213,12 +222,67 @@ void RlScheduler::UpdateTask(RlTask* task, std::ifstream& instream) {
 # define htonll(x) (((uint64_t)htonl((x) & 0xFFFFFFFF) << 32) | htonl((x) >> 32))
 #endif
 
+int RlScheduler::InitServerSocket() {
+  server_socket_ = socket(AF_INET, SOCK_STREAM, 0);
+  if (server_socket_ == -1) {
+    GHOST_DPRINT(1, stderr, "Failed to create server socket.");
+    return 1;
+  }
+
+  int reuseaddr_value = 1;  
+  if (setsockopt(server_socket_, SOL_SOCKET, SO_REUSEADDR, &reuseaddr_value, sizeof(reuseaddr_value)) < 0) {
+    GHOST_DPRINT(1, stderr, "Failed to set SO_REUSEADDR on server socket.");
+    close(server_socket_);
+    server_socket_ = -1;
+    return 1;
+  }
+
+  struct timeval timeout;
+  timeout.tv_sec = 0;
+  timeout.tv_usec = 20000;
+  if (setsockopt(server_socket_, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) < 0) {
+    GHOST_DPRINT(1, stderr, "Failed to set socket send timeout.");
+    close(server_socket_);
+    server_socket_ = -1;
+    return 1;
+  }
+  if (setsockopt(server_socket_, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+    GHOST_DPRINT(1, stderr, "Failed to set socket receive timeout.");
+    close(server_socket_);
+    server_socket_ = -1;
+    return 1;
+  }
+
+  sockaddr_in server_addr;
+  server_addr.sin_family = AF_INET;
+  server_addr.sin_port = htons(listen_socket_port_);
+  server_addr.sin_addr.s_addr = INADDR_ANY;
+
+  if (bind(server_socket_, (sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
+    GHOST_DPRINT(1, stderr, "Failed to bind server socket.");
+    close(server_socket_);
+    server_socket_ = -1;
+    return 1;
+  }
+
+  if (listen(server_socket_, 1) == -1) {
+    GHOST_DPRINT(1, stderr, "Failed to listen on server socket.");
+    close(server_socket_);
+    server_socket_ = -1;
+    return 1;
+  }
+
+  GHOST_DPRINT(3, stderr, "Server socket initialized and listening on port %u.", listen_socket_port_);
+  return 0;
+}
+
 int HandleClient(int client_socket, uint32_t* buf) {
   struct timeval timeout;
   timeout.tv_sec = 0;
   timeout.tv_usec = 20000;
   if (setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
     GHOST_DPRINT(3, stderr, "Failed to set socket receive timeout. HandleClient aborted.");
+    close(client_socket);
     return 1;
   }
   uint32_t num;
@@ -234,46 +298,19 @@ int HandleClient(int client_socket, uint32_t* buf) {
 }
 
 int RlScheduler::ReceiveAction(uint32_t* buf) {
-  int sock = socket(AF_INET, SOCK_STREAM, 0);
-  if (sock == -1) {
-    GHOST_DPRINT(3, stderr, "Failed to create socket. ReceiveAction aborted.");
-    return 1;
-  }
+  CHECK_NE(server_socket_, -1);
 
-  struct timeval timeout;
-  timeout.tv_sec = 0;
-  timeout.tv_usec = 20000;
-  if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
-    GHOST_DPRINT(3, stderr, "Failed to set socket receive timeout. ReceiveAction aborted.");
-    return 1;
-  }
-  if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) < 0) {
-    GHOST_DPRINT(3, stderr, "Failed to set socket send timeout. ReceiveAction aborted.");
-    return 1;
-  }
-
-  sockaddr_in server_addr;
-  server_addr.sin_family = AF_INET;
-  server_addr.sin_port = htons(this->listen_socket_port_);
-  server_addr.sin_addr.s_addr = INADDR_ANY;
-  if (bind(sock, (sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
-    GHOST_DPRINT(3, stderr, "Failed to bind socket. ReceiveAction aborted.");
-    close(sock);
-    return 1;
-  }
-  if (listen(sock, 1) == -1) {
-    GHOST_DPRINT(3, stderr, "Failed to listen on socket. ReceiveAction aborted.");
-    close(sock);
-    return 1;
-  }
-
-  GHOST_DPRINT(3, stdout, "Listening on port %u\n", this->listen_socket_port_);
-  int client_socket = accept(sock, nullptr, nullptr);
-  close(sock);
+  GHOST_DPRINT(3, stderr, "ReceiveAction: waiting for environment.");
+  int client_socket = accept(server_socket_, nullptr, nullptr);
   if (client_socket == -1) {
-    GHOST_DPRINT(3, stderr, "Failed to accept connection. ReceiveAction aborted.");
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      GHOST_DPRINT(3, stderr, "Socket connection timed out. ReceiveAction aborted.");
+    } else {
+      GHOST_DPRINT(3, stderr, "Failed to accept connection: %s. ReceiveAction aborted.", strerror(errno));
+    }
     return 1;
   }
+
   int status = HandleClient(client_socket, buf);
   return status;
 }
