@@ -70,8 +70,13 @@ def use_env(env):
     # Your code goes here
     observation, _ = env.reset()
     while True:
-        action = env.unwrapped.actual_runqueue_length
-        observation, reward, terminated, truncated, _ = env.step(action)
+        runqueue = observation[-1]["runqueue"]
+        target_index = len(runqueue) - 1
+        try:
+            target_index = next(i for i, value in enumerate(runqueue) if value["vsize"] == 0.0)
+        except StopIteration:
+            pass
+        observation, reward, terminated, truncated, _ = env.step(target_index)
         if terminated or truncated:
             break
 

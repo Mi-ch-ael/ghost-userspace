@@ -49,7 +49,7 @@ class SchedulerEnv(gymnasium.Env):
                 })] * runqueue_cutoff_length)
             })
         ] * (max_prev_events_stored + 1))
-        self.action_space = spaces.Discrete(runqueue_cutoff_length)
+        self.action_space: spaces.Discrete = spaces.Discrete(runqueue_cutoff_length)
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
@@ -144,7 +144,7 @@ class SchedulerEnv(gymnasium.Env):
             action_socket.close()
 
     def _is_action_valid(self, action: int):
-        return action <= self.actual_runqueue_length
+        return action <= self.actual_runqueue_length and action < self.action_space.n
 
     def step(self, action):
         if not self._is_action_valid(action):
