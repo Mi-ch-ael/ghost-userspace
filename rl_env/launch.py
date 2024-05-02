@@ -4,6 +4,7 @@ import os
 import signal
 import subprocess
 import time
+from typing import Union
 
 import gymnasium
 
@@ -81,6 +82,24 @@ def use_env(env):
             break
 
 
+def terminate_scheduler(scheduler_process: Union[subprocess.Popen, None], timeout_sigint=0.1, timeout_sigterm=1):
+    if not scheduler_process or not check_process_running(scheduler_process):
+        return
+    try:
+        os.killpg(os.getpgid(scheduler_process.pid), signal.SIGINT)
+        scheduler_process.wait(timeout=timeout_sigint)
+        return
+    except subprocess.TimeoutExpired:
+        print("\nScheduler does not respond to SIGINT; switching to SIGTERM.")
+    try:
+        os.killpg(os.getpgid(scheduler_process.pid), signal.SIGTERM)
+        scheduler_process.wait(timeout=timeout_sigterm)
+    except subprocess.TimeoutExpired:
+        print("Scheduler does not respond to SIGTERM; switching to SIGKILL.")
+        os.killpg(os.getpgid(scheduler_process.pid), signal.SIGKILL)
+        scheduler_process.wait()
+
+
 def main():
     parser = setup_parser()
     args = parser.parse_args()
@@ -103,6 +122,7 @@ def main():
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            preexec_fn=os.setsid,
         )
         time.sleep(1)
         if not check_process_running(scheduler_process):
@@ -110,13 +130,7 @@ def main():
         use_env(env)
     finally:
         env.close()
-        if scheduler_process and check_process_running(scheduler_process):
-            original_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
-            try:
-                os.killpg(os.getpgid(scheduler_process.pid), signal.SIGINT)
-            finally:
-                signal.signal(signal.SIGINT, original_handler)
-            scheduler_process.wait()
+        terminate_scheduler(scheduler_process)
         if scheduler_process:
             print_scheduler_output(scheduler_process)
 
