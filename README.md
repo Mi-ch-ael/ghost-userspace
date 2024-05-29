@@ -1,3 +1,161 @@
+# Work in progress: окружение для обучения RL-агентов на основе ghOSt и Gymnasium
+
+## Пререквизиты
+
+* [ghOSt-kernel](https://github.com/google/ghost-kernel) ([скрипт](https://gist.github.com/Mi-ch-ael/015c8c731ad357218405d1af79fbd238) установки ядра на Ubuntu 20.04);
+* Bazel: [Bazel Installation Guide](https://docs.bazel.build/versions/main/install.html)
+* Apt-пакеты: `libnuma-dev libcap-dev libelf-dev libbfd-dev gcc clang-12 llvm zlib1g-dev python-is-python3` (подробно в оригинальном README ниже)
+* Python-пакеты из `requirements.txt`: `pip install -r requirements.txt`
+
+## Сборка и запуск
+
+#### Юнит-тесты
+
+Юнит-тесты среды обучения не требуют установки большинства компонентов. Для запуска тестов в проекте используется Bazel,
+но технически можно запустить тесты и напрямую.
+Для запуска одного файла с тестами используется команда:
+```
+$ bazel test //rl_env/tests:<имя файла в rl_env/tests без расширения> --test_output=all
+```
+Например, запуск всех тестов класса среды:
+```
+$ bazel test //rl_env/tests:scheduler_env_tests --test_output=all
+```
+Запуск всех тестов сразу:
+```
+$ bazel test //rl_env/tests:all_tests --test_output=all
+```
+
+#### Компоненты ghOSt
+
+Сборка используемых компонентов ghOSt-userspace:
+```
+$ bazel build single_exp
+$ bazel build rl_scheduler_agent
+```
+Здесь `single_exp` - нагрузка (задачи, которые будут выполняться на планировщике),
+`rl_scheduler_agent` - управляющий агент планировщика (также соберёт планировщик).
+
+#### Объединённый пример
+
+Пример 1 - создание среды, запуск компонентов ghOSt, использование среды клиентским кодом и чтение результатов наблюдений - в файле `rl_env/main.py`.
+Запуск от рута (если используется venv, не забудьте активировать её в консоли рута тоже):
+```
+# cd rl_env && python main.py
+```
+Примерный вывод:
+```
+SchedulerEnv._get_raw_metrics: Connected by address: ('127.0.0.1', 53296)
+SchedulerEnv._get_raw_metrics: unpacked length: 15
+/home/ghostling/sambashare/ghost-userspace/.venv/lib/python3.8/site-packages/gymnasium/utils/passive_env_checker.py:143: UserWarning: WARN: The obs returned by the `reset()` method was expecting a tuple, actual type: <class 'list'>
+  logger.warn(f"{pre} was expecting a tuple, actual type: {type(obs)}")
+/home/ghostling/sambashare/ghost-userspace/.venv/lib/python3.8/site-packages/gymnasium/utils/passive_env_checker.py:131: UserWarning: WARN: The obs returned by the `reset()` method was expecting a numpy array, actual type: <class 'float'>
+  logger.warn(
+/home/ghostling/sambashare/ghost-userspace/.venv/lib/python3.8/site-packages/gymnasium/spaces/box.py:240: UserWarning: WARN: Casting input x to numpy array.
+  gym.logger.warn("Casting input x to numpy array.")
+/home/ghostling/sambashare/ghost-userspace/.venv/lib/python3.8/site-packages/gymnasium/utils/passive_env_checker.py:159: UserWarning: WARN: The obs returned by the `reset()` method is not within the observation space.
+  logger.warn(f"{pre} is not within the observation space.")
+/home/ghostling/sambashare/ghost-userspace/.venv/lib/python3.8/site-packages/gymnasium/utils/passive_env_checker.py:127: UserWarning: WARN: The obs returned by the `reset()` method should be an int or np.int64, actual type: <class 'float'>
+  logger.warn(f"{pre} should be an int or np.int64, actual type: {type(obs)}")
+Reset environment and got initial observation: {'callback_type': 0, 'task_metrics': {'run_state': 2, 'cpu_num': 0, 'preempted': 0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 16.0}, 'runqueue': [{'run_state': 2, 'cpu_num': 0, 'preempted': 0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 16.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}]}
+SchedulerEnv._get_raw_metrics: Connected by address: ('127.0.0.1', 53300)
+SchedulerEnv._get_raw_metrics: unpacked length: 15
+/home/ghostling/sambashare/ghost-userspace/.venv/lib/python3.8/site-packages/gymnasium/utils/passive_env_checker.py:143: UserWarning: WARN: The obs returned by the `step()` method was expecting a tuple, actual type: <class 'list'>
+  logger.warn(f"{pre} was expecting a tuple, actual type: {type(obs)}")
+/home/ghostling/sambashare/ghost-userspace/.venv/lib/python3.8/site-packages/gymnasium/utils/passive_env_checker.py:131: UserWarning: WARN: The obs returned by the `step()` method was expecting a numpy array, actual type: <class 'float'>
+  logger.warn(
+/home/ghostling/sambashare/ghost-userspace/.venv/lib/python3.8/site-packages/gymnasium/utils/passive_env_checker.py:159: UserWarning: WARN: The obs returned by the `step()` method is not within the observation space.
+  logger.warn(f"{pre} is not within the observation space.")
+/home/ghostling/sambashare/ghost-userspace/.venv/lib/python3.8/site-packages/gymnasium/utils/passive_env_checker.py:127: UserWarning: WARN: The obs returned by the `step()` method should be an int or np.int64, actual type: <class 'float'>
+  logger.warn(f"{pre} should be an int or np.int64, actual type: {type(obs)}")
+Made a step and got observation: {'callback_type': 0, 'task_metrics': {'run_state': 2, 'cpu_num': 1, 'preempted': 0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 16.0}, 'runqueue': [{'run_state': 2, 'cpu_num': 1, 'preempted': 0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 16.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}]}
+---stdout of scheduler---
+Initializing...
+Initialization complete, ghOSt active.
+
+Done!
+
+---end stdout of scheduler---
+---stderr of scheduler---
+Received action #0
+Failed to bind socket. Skipped event. Awaiting termination.
+
+---end stderr of scheduler---
+---stdout of single_exp---
+SimpleExp
+
+Starting simple worker
+
+Finished simple worker
+ took 18.85 ms
+
+---end stdout of single_exp---
+---stderr of single_exp---
+hello world!
+fantastic nap!
+
+---end stderr of single_exp---
+```
+Вывод содержит время выполнения нагрузки, в данном случае 18.85 мс. У взятого за образец fifo та же нагрузка выполняется (грубо) за 12-17 мс.
+
+В случае возникновения проблем можно удалить оставшиеся с прошлых запусков планировщика анклавы вручную:
+```
+# ls /sys/fs/ghost
+ctl  enclave_1	version
+# echo destroy > /sys/fs/ghost/enclave_1/ctl
+```
+...или одной командой:
+```
+# for i in /sys/fs/ghost/enclave_*/ctl; do echo destroy > $i; done
+```
+
+Пример 2 - тест общения в одну сторону (сообщения от планировщика среде):
+```
+$ git checkout a8efd225185abdd1be8eb9a2fb604e620eab927e
+$ bazel build rl_scheduler_agent
+$ cd rl_env
+# python scheduler_plus_environment.py
+```
+Примерный вывод:
+```
+SchedulerEnv._get_raw_metrics: Connected by address: ('127.0.0.1', 58382)
+SchedulerEnv._get_raw_metrics: unpacked length: 15
+SchedulerEnv._get_raw_metrics: Connected by address: ('127.0.0.1', 58384)
+SchedulerEnv._get_raw_metrics: unpacked length: 15
+---stdout of scheduler---
+Initializing...
+Initialization complete, ghOSt active.
+
+Done!
+
+---end stdout of scheduler---
+---stderr of scheduler---
+
+---end stderr of scheduler---
+---stdout of single_exp---
+SimpleExp
+
+Starting simple worker
+
+Finished simple worker
+ took 17.00 ms
+
+---end stdout of single_exp---
+---stderr of single_exp---
+hello world!
+fantastic nap!
+
+---end stderr of single_exp---
+.
+----------------------------------------------------------------------
+Ran 1 test in 2.051s
+
+OK
+```
+
+---
+### Оригинальный README для справки
+
 # ghOSt: Fast &amp; Flexible User-Space Delegation of Linux Scheduling
 
 ghOSt is a general-purpose delegation of scheduling policy implemented on top of
