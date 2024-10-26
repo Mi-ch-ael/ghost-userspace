@@ -54,6 +54,7 @@ class SchedulerEnv(gymnasium.Env):
 
         self.socket_host = "localhost"
         self.socket_port = socket_port
+        self.receive_timeout_seconds = None # No timeout for receiving next metrics portion
         self.scheduler_port = scheduler_port
         self.share_counter = 0
         self.parser = LnCapObservationParser(runqueue_cutoff_length, time_ln_cap, vsize_ln_cap)
@@ -77,7 +78,9 @@ class SchedulerEnv(gymnasium.Env):
         self.background_collector_thread.stop()
 
     def _listen_for_updates(self):
+        metrics_per_task = len(self.parser.task_metrics)
         metrics = self._get_raw_metrics()
+        assert (len(metrics) - 2) % metrics_per_task == 0
         action_required = (metrics[0] == 1)
         parsed_metrics = self.parser.parse(metrics[1:])
         try:
@@ -88,30 +91,28 @@ class SchedulerEnv(gymnasium.Env):
             if action_required:
                 self.actionable_event_metrics = parsed_metrics
                 self.observations_ready = True
+                self.actual_runqueue_length = (len(metrics) - 2 - metrics_per_task) // metrics_per_task
         finally:
             self.accumulated_metrics_lock.release()
 
     def _get_raw_metrics(self):
-        metrics_per_task = len(self.parser.task_metrics)
         connection = None
         metrics_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        metrics_socket.settimeout(self.receive_timeout_seconds)
         try:
             metrics_socket.bind((self.socket_host, self.socket_port))
-            metrics_socket.listen(1)
+            metrics_socket.listen()
             connection, address = metrics_socket.accept()
             print(f"SchedulerEnv._get_raw_metrics: Connected by address: {address}")
             length_data = connection.recv(struct.calcsize('!I'))
             length = struct.unpack('!I', length_data)[0]
             print(f"SchedulerEnv._get_raw_metrics: unpacked length: {length}")
-            assert (length - 1 - metrics_per_task) % metrics_per_task == 0
-            self.actual_runqueue_length = (length - 1 - metrics_per_task) // metrics_per_task
             sequence_data = connection.recv(length * struct.calcsize('!Q'))
             sequence = struct.unpack(f'!{length}Q', sequence_data)
             return list(sequence)
         finally:
             metrics_socket.close()
             connection and connection.close()
-
 
     def _send_action(self, action):
         action_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

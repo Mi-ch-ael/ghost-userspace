@@ -132,6 +132,24 @@ class IntegrationTests(unittest.TestCase):
         if isinstance(result, Exception):
             self.fail(f"SchedulerEnv raised an exception: {result}")
 
+    def test_listen_for_non_actionable_update(self):
+        sequence_to_send = [0, *[i + 1 for i in range(15)]]
+        port = 14014
+        sched_environment = SchedulerEnv()
+        sched_environment.receive_timeout_seconds = 0.5
+        try:
+            sched_environment._start_collector()
+            time.sleep(0.1)
+            send_sequence(sequence_to_send, port=port)
+            time.sleep(0.1)
+            self.assertIs(sched_environment.actionable_event_metrics, None)
+            self.assertEqual(sched_environment.observations_ready, False)
+            self.assertEqual(sched_environment.accumulated_metrics[0]["callback_type"], 0)
+            self.assertEqual(sched_environment.accumulated_metrics[-1]["callback_type"], 1)
+            self.assertEqual(sched_environment.accumulated_metrics_lock.locked(), False)
+        finally:
+            sched_environment._finalize()
+
     def test_reset_rl_environment(self):
         result_queue = queue.Queue()
         sched_environment = gymnasium.make('rl_env/SchedulerEnv-v0')
