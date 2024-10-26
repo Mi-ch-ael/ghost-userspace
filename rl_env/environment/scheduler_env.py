@@ -1,6 +1,7 @@
 import gymnasium
 from gymnasium import spaces
 from threading import Lock
+import time
 import socket
 import struct
 from threads.stoppable_thread import StoppableThread
@@ -66,13 +67,13 @@ class SchedulerEnv(gymnasium.Env):
         self.actionable_event_metrics = None
         self.accumulated_metrics_lock = Lock()
         self.observations_ready = False
-        self.background_collector_thread = StoppableThread(target=self._listen_for_updates, args=())
+        self.background_collector_thread = StoppableThread(target=self._listen_for_updates, args=(), daemon=True)
 
     def _start_collector(self):
         """Start background collector that waits for metrics."""
         self.background_collector_thread.start()
 
-    def _finalize(self):
+    def finalize(self):
         """Perform pre-shutdown tasks. For now, just stop background listening thread,
         but may be used for dumping learning statistics, etc."""
         self.background_collector_thread.stop()
@@ -123,15 +124,19 @@ class SchedulerEnv(gymnasium.Env):
         finally:
             action_socket.close()
 
+    def _is_action_valid(self, action: int):
+        return action <= self.actual_runqueue_length
+
     def step(self, action):
-        if action >= self.actual_runqueue_length:
+        if not self._is_action_valid(action):
             default_observation = generate_zeroed_sample(self.observation_space)
             return default_observation, \
-                -1, True, False, {"error": f"No task number {action} in run queue"}
-        self._send_action(action)
-        raw_metrics = self._get_raw_metrics()
-        observation = self.parser.parse(raw_metrics)
-        return observation, 0, False, False, {}
+                -1, True, False, \
+                    {"error": f"Actual run queue is too short to place this task on position {action}"}
+        # self._send_action(action)
+        # raw_metrics = self._get_raw_metrics()
+        # observation = self.parser.parse(raw_metrics)
+        # return observation, 0, False, False, {}
 
     def reset(self, seed=None, options=None):
         """
@@ -146,6 +151,12 @@ class SchedulerEnv(gymnasium.Env):
             Maybe getting SchedulerEnv to control scheduler's lifetime entirely with another
             constructor parameter is better. Would need `close()` method then."""
             raise NotImplementedError("Restart behavior is yet to be implemented")
-        raw_metrics = self._get_raw_metrics()
-        observation = self.parser.parse(raw_metrics)
+        if not self.background_collector_thread.is_alive():
+            self._start_collector()
+        while not self.observations_ready:
+            time.sleep(0.0001)
+        self.accumulated_metrics_lock.acquire()
+        observation = (*self.accumulated_metrics, self.actionable_event_metrics)
+        self.observations_ready = False
+        self.accumulated_metrics_lock.release()
         return observation, {}

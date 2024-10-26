@@ -78,7 +78,7 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(sched_environment.observations_ready, False)
             self.assertEqual(sched_environment.actionable_event_metrics, None)
         finally:
-            sched_environment._finalize()
+            sched_environment.finalize()
             time.sleep(1)
             self.assertEqual(sched_environment.background_collector_thread.is_alive(), False)
 
@@ -105,7 +105,7 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(sched_environment.observations_ready, True)
             self.assertEqual(sched_environment.actionable_event_metrics["callback_type"], 4)
         finally:
-            sched_environment._finalize()
+            sched_environment.finalize()
             time.sleep(1)
             self.assertEqual(sched_environment.background_collector_thread.is_alive(), False)
 
@@ -148,7 +148,24 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(sched_environment.accumulated_metrics[-1]["callback_type"], 1)
             self.assertEqual(sched_environment.accumulated_metrics_lock.locked(), False)
         finally:
-            sched_environment._finalize()
+            sched_environment.finalize()
+
+    def test_reset_first_callback_actionable(self):
+        sched_environment = gymnasium.make('rl_env/SchedulerEnv-v0')
+        metrics_to_send = [
+            1,
+            7,
+            1, 0, 0, 45152452, 51524520, 0, 89102602,
+            1, 0, 0, 45152452, 51524520, 0, 89102602,
+            0, 0, 1, 980551253, 1251213, 1515332, 60000000,
+        ]
+        sending_thread = threading.Thread(target=send_sequence, args=(metrics_to_send,))
+        sending_thread.start()
+        observation, _ = sched_environment.reset()
+        sending_thread.join()
+
+    def test_reset_non_actionable_then_actionable(self):
+        pass
 
     def test_reset_rl_environment(self):
         result_queue = queue.Queue()
