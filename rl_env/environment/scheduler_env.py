@@ -58,7 +58,7 @@ class SchedulerEnv(gymnasium.Env):
         self.receive_timeout_seconds = None # No timeout for receiving next metrics portion
         self.scheduler_port = scheduler_port
         self.share_counter = 0
-        self.parser = LnCapObservationParser(runqueue_cutoff_length, time_ln_cap, vsize_ln_cap)
+        self.parser = LnCapObservationParser(self.observation_space[0], runqueue_cutoff_length, time_ln_cap, vsize_ln_cap)
         self.actual_runqueue_length = 0
         self.max_prev_events_stored = max_prev_events_stored
         self.accumulated_metrics = [

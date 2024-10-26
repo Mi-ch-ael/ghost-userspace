@@ -416,7 +416,14 @@ class SchedulerEnvTests(unittest.TestCase):
         sched_environment = SchedulerEnv()
         sched_environment._get_raw_metrics = unittest.mock.Mock(side_effect=get_raw_metrics_mock_actionable)
         check_reset_return_type(sched_environment)
-        
+
+    def test_check_action_space(self):
+        sched_environment = gymnasium.make('rl_env/SchedulerEnv-v0')
+        check_action_space(sched_environment.action_space)
+
+    def test_check_observation_space(self):
+        sched_environment = gymnasium.make('rl_env/SchedulerEnv-v0')
+        check_observation_space(sched_environment.observation_space)
 
     @unittest.mock.patch('socket.socket')
     def test_get_raw_metrics_positive(self, mock_socket):

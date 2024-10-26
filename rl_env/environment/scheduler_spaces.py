@@ -2,14 +2,10 @@ import numpy as np
 from gymnasium import spaces
 
 def generate_zeroed_sample(space):
-        if isinstance(space, spaces.Box):
-            return np.zeros(space.shape, dtype=space.dtype)
+        if isinstance(space, spaces.Box) and space.shape == (1,):
+             return np.array([0.0], dtype=np.float32)
         elif isinstance(space, spaces.Discrete):
-            return 0
-        elif isinstance(space, spaces.MultiDiscrete):
-            return np.zeros(space.nvec, dtype=space.dtype)
-        elif isinstance(space, spaces.MultiBinary):
-            return np.zeros(space.n, dtype=int)
+            return np.int64(0)
         elif isinstance(space, spaces.Tuple):
             return tuple(generate_zeroed_sample(subspace) for subspace in space.spaces)
         elif isinstance(space, spaces.Dict):
