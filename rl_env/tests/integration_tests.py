@@ -4,6 +4,7 @@ import queue
 import unittest
 import socket
 import struct
+import unittest.mock
 import gymnasium
 import os
 import sys
@@ -21,6 +22,26 @@ def send_sequence(sequence, host='localhost', port=14014):
         message = struct.pack(f'!{len(sequence)}Q', *sequence)
         s.sendall(message)
 
+def get_raw_metrics_mock_non_actionable():
+    time.sleep(1)
+    return [
+        0,
+        4,
+        1, 0, 0, 45152452, 51524520, 0, 89102602,
+        1, 0, 0, 45152452, 51524520, 0, 89102602,
+        0, 0, 1, 980551253, 1251213, 1515332, 60000000,
+    ]
+
+def get_raw_metrics_mock_actionable():
+    time.sleep(1)
+    return [
+        1,
+        4,
+        1, 0, 0, 45152452, 51524520, 0, 89102602,
+        1, 0, 0, 45152452, 51524520, 0, 89102602,
+        0, 0, 1, 980551253, 1251213, 1515332, 60000000,
+    ]
+
 
 class IntegrationTests(unittest.TestCase):
     def test_example_usage_of_stoppable_thread(self):
@@ -33,6 +54,60 @@ class IntegrationTests(unittest.TestCase):
         stoppable_thread.stop()
         time.sleep(0.2)
         self.assertEqual(stoppable_thread.is_alive(), False)
+
+    def test_thread_communication_on_non_actionable_callback(self):
+        sched_environment = SchedulerEnv()
+        try:
+            sched_environment._get_raw_metrics = unittest.mock.Mock(side_effect=get_raw_metrics_mock_non_actionable)
+            sched_environment._start_collector()
+            time.sleep(0.5)
+            sched_environment._get_raw_metrics.assert_called_once()
+            time.sleep(0.6)
+            self.assertEqual(sched_environment.accumulated_metrics_lock.locked(), False)
+            self.assertEqual(len(sched_environment.accumulated_metrics), sched_environment.max_prev_events_stored)
+            self.assertEqual(
+                sched_environment.accumulated_metrics[0]["task_metrics"]["vsize"], 
+                0.0,
+                "Expect first record to be zeroed out"
+            )
+            self.assertEqual(
+                sched_environment.accumulated_metrics[1]["task_metrics"]["vsize"], 
+                16.0,
+                "Expect last record not to be zeroed out"
+            )
+            self.assertEqual(sched_environment.observations_ready, False)
+            self.assertEqual(sched_environment.actionable_event_metrics, None)
+        finally:
+            sched_environment._finalize()
+            time.sleep(1)
+            self.assertEqual(sched_environment.background_collector_thread.is_alive(), False)
+
+    def test_thread_communication_on_actionable_callback(self):
+        sched_environment = SchedulerEnv()
+        try:
+            sched_environment._get_raw_metrics = unittest.mock.Mock(side_effect=get_raw_metrics_mock_actionable)
+            sched_environment._start_collector()
+            time.sleep(0.5)
+            sched_environment._get_raw_metrics.assert_called_once()
+            time.sleep(0.6)
+            self.assertEqual(sched_environment.accumulated_metrics_lock.locked(), False)
+            self.assertEqual(len(sched_environment.accumulated_metrics), sched_environment.max_prev_events_stored)
+            self.assertEqual(
+                sched_environment.accumulated_metrics[0]["task_metrics"]["vsize"], 
+                0.0,
+                "Expect first record to be zeroed out"
+            )
+            self.assertEqual(
+                sched_environment.accumulated_metrics[1]["task_metrics"]["vsize"], 
+                0.0,
+                "Expect last record to be zeroed out"
+            )
+            self.assertEqual(sched_environment.observations_ready, True)
+            self.assertEqual(sched_environment.actionable_event_metrics["callback_type"], 4)
+        finally:
+            sched_environment._finalize()
+            time.sleep(1)
+            self.assertEqual(sched_environment.background_collector_thread.is_alive(), False)
 
     def test_get_raw_metrics_positive(self):
         sequence_to_send = [i for i in range(15)]

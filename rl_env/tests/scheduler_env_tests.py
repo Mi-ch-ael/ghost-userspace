@@ -12,9 +12,11 @@ import gymnasium
 import environment
 from threads.stoppable_thread import StoppableThread
 from environment.scheduler_env import SchedulerEnv
+from environment.scheduler_spaces import generate_zeroed_sample
 
 class SchedulerEnvTests(unittest.TestCase):
     maxDiff = None
+
     def test_environment_creation_default_parameters(self):
         sched_environment = gymnasium.make('rl_env/SchedulerEnv-v0')
         self.assertIs(sched_environment.render_mode, None)
@@ -26,7 +28,29 @@ class SchedulerEnvTests(unittest.TestCase):
         self.assertEqual(sched_environment.unwrapped.parser.runqueue_cutoff_length, 8)
         self.assertEqual(sched_environment.unwrapped.parser.time_cap, 16)
         self.assertEqual(sched_environment.unwrapped.parser.vsize_cap, 16)
-        self.assertEqual(sched_environment.unwrapped.accumulated_metrics, [])
+        self.assertEqual(sched_environment.unwrapped.accumulated_metrics, [
+            {
+                "callback_type": 0,
+                "task_metrics": {
+                    "run_state": 0,
+                    "cpu_num": 0,
+                    "preempted": 0,
+                    "utime": 0.0,
+                    "stime": 0.0,
+                    "guest_time": 0.0,
+                    "vsize": 0.0,
+                },
+                "runqueue": ({
+                    "run_state": 0,
+                    "cpu_num": 0,
+                    "preempted": 0,
+                    "utime": 0.0,
+                    "stime": 0.0,
+                    "guest_time": 0.0,
+                    "vsize": 0.0,
+                },) * 8
+            }
+        ] * 2)
         self.assertEqual(sched_environment.unwrapped.accumulated_metrics_lock.locked(), False)
         self.assertEqual(sched_environment.unwrapped.observations_ready, False)
         self.assertIs(type(sched_environment.unwrapped.background_collector_thread), StoppableThread)
@@ -54,7 +78,7 @@ class SchedulerEnvTests(unittest.TestCase):
             })
         ] * 3))
         self.assertEqual(sched_environment.action_space, gymnasium.spaces.Discrete(8))
-        # Check that no background threads were started
+        self.assertEqual(sched_environment.unwrapped.background_collector_thread.is_alive(), False)
 
     def test_environment_creation_custom_parameters(self):
         sched_environment = gymnasium.make(
@@ -76,7 +100,29 @@ class SchedulerEnvTests(unittest.TestCase):
         self.assertEqual(sched_environment.unwrapped.parser.runqueue_cutoff_length, 5)
         self.assertEqual(sched_environment.unwrapped.parser.time_cap, 14)
         self.assertEqual(sched_environment.unwrapped.parser.vsize_cap, 17)
-        self.assertEqual(sched_environment.unwrapped.accumulated_metrics, [])
+        self.assertEqual(sched_environment.unwrapped.accumulated_metrics, [
+            {
+                "callback_type": 0,
+                "task_metrics": {
+                    "run_state": 0,
+                    "cpu_num": 0,
+                    "preempted": 0,
+                    "utime": 0.0,
+                    "stime": 0.0,
+                    "guest_time": 0.0,
+                    "vsize": 0.0,
+                },
+                "runqueue": ({
+                    "run_state": 0,
+                    "cpu_num": 0,
+                    "preempted": 0,
+                    "utime": 0.0,
+                    "stime": 0.0,
+                    "guest_time": 0.0,
+                    "vsize": 0.0,
+                },) * 5
+            }
+        ] * 4)
         self.assertEqual(sched_environment.unwrapped.accumulated_metrics_lock.locked(), False)
         self.assertEqual(sched_environment.unwrapped.observations_ready, False)
         self.assertIs(type(sched_environment.unwrapped.background_collector_thread), StoppableThread)
@@ -104,7 +150,7 @@ class SchedulerEnvTests(unittest.TestCase):
             })
         ] * 5))
         self.assertEqual(sched_environment.action_space, gymnasium.spaces.Discrete(5))
-        # Check that no background threads were started
+        self.assertEqual(sched_environment.unwrapped.background_collector_thread.is_alive(), False)
 
     @unittest.mock.patch.object(SchedulerEnv, '_listen_for_updates')
     def test_start_collector(self, mock_listen_for_updates):
@@ -126,6 +172,90 @@ class SchedulerEnvTests(unittest.TestCase):
         sched_environment._finalize()
         time.sleep(0.02)
         self.assertEqual(sched_environment.background_collector_thread.is_alive(), False)
+
+    def test_listen_for_actionable_update(self):
+        sched_environment = SchedulerEnv()
+        sched_environment._get_raw_metrics = unittest.mock.Mock(return_value=[
+            1,
+            4,
+            1, 0, 0, 45152452, 51524520, 0, 89102602,
+            1, 0, 0, 45152452, 51524520, 0, 89102602,
+            0, 0, 1, 980551253, 1251213, 1515332, 60000000,
+        ])
+        sched_environment._listen_for_updates()
+
+        sched_environment._get_raw_metrics.assert_called_once()
+        self.assertEqual(sched_environment.accumulated_metrics_lock.locked(), False)
+        self.assertEqual(
+            sched_environment.accumulated_metrics, 
+            [generate_zeroed_sample(sched_environment.observation_space[0])] * 2,
+            "Expect `accumulated_metrics` to be empty (i.e. zeroed out) after an actionable callback"
+        )
+        self.assertEqual(sched_environment.observations_ready, True)
+        self.assertEqual(sched_environment.actionable_event_metrics["callback_type"], 4)
+        self.assertDictEqual(sched_environment.actionable_event_metrics["task_metrics"], {
+                "run_state": 1,
+                "cpu_num": 0,
+                "preempted": 0,
+                "utime": 16.0,
+                "stime": 16.0,
+                "guest_time": 0.0,
+                "vsize": 16.0,
+            })
+        self.assertDictEqual(sched_environment.actionable_event_metrics["runqueue"][0], {
+                "run_state": 1,
+                "cpu_num": 0,
+                "preempted": 0,
+                "utime": 16.0,
+                "stime": 16.0,
+                "guest_time": 0.0,
+                "vsize": 16.0,
+            })
+        self.assertEqual(sched_environment.actionable_event_metrics["runqueue"][1]["run_state"], 0)
+        self.assertEqual(sched_environment.actionable_event_metrics["runqueue"][1]["cpu_num"], 0)
+        self.assertEqual(sched_environment.actionable_event_metrics["runqueue"][1]["preempted"], 1)
+        self.assertEqual(sched_environment.actionable_event_metrics["runqueue"][1]["utime"], 16.0)
+        self.assertAlmostEqual(sched_environment.actionable_event_metrics["runqueue"][1]["stime"], 14.039624, delta=1e-6)
+        self.assertAlmostEqual(sched_environment.actionable_event_metrics["runqueue"][1]["guest_time"], 14.231145, delta=1e-6)
+        self.assertEqual(sched_environment.actionable_event_metrics["runqueue"][1]["vsize"], 16.0)
+        self.assertEqual(sched_environment.actionable_event_metrics["runqueue"][2:], [
+            {
+                "run_state": 0,
+                "cpu_num": 0,
+                "preempted": 0,
+                "utime": 0.0,
+                "stime": 0.0,
+                "guest_time": 0.0,
+                "vsize": 0.0,
+            },
+        ] * 6)
+
+    def test_listen_for_non_actionable_update(self):
+        sched_environment = SchedulerEnv()
+        sched_environment._get_raw_metrics = unittest.mock.Mock(return_value=[
+            0,
+            4,
+            1, 0, 0, 45152452, 51524520, 0, 89102602,
+            1, 0, 0, 45152452, 51524520, 0, 89102602,
+            0, 0, 1, 980551253, 1251213, 1515332, 60000000,
+        ])
+        sched_environment._listen_for_updates()
+
+        sched_environment._get_raw_metrics.assert_called_once()
+        self.assertEqual(sched_environment.accumulated_metrics_lock.locked(), False)
+        self.assertEqual(len(sched_environment.accumulated_metrics), sched_environment.max_prev_events_stored)
+        self.assertEqual(
+            sched_environment.accumulated_metrics[0]["task_metrics"]["vsize"], 
+            0.0,
+            "Expect first record to be zeroed out"
+        )
+        self.assertEqual(
+            sched_environment.accumulated_metrics[1]["task_metrics"]["vsize"], 
+            16.0,
+            "Expect last record not to be zeroed out"
+        )
+        self.assertEqual(sched_environment.observations_ready, False)
+        self.assertEqual(sched_environment.actionable_event_metrics, None)
 
     # Need to remake observation to have new form: `Tuple` of `Dict`s
     @unittest.expectedFailure

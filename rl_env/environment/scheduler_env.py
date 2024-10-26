@@ -59,7 +59,10 @@ class SchedulerEnv(gymnasium.Env):
         self.parser = LnCapObservationParser(runqueue_cutoff_length, time_ln_cap, vsize_ln_cap)
         self.actual_runqueue_length = 0
         self.max_prev_events_stored = max_prev_events_stored
-        self.accumulated_metrics = []
+        self.accumulated_metrics = [
+            generate_zeroed_sample(self.observation_space[0]) for _ in range(self.max_prev_events_stored)
+        ]
+        self.actionable_event_metrics = None
         self.accumulated_metrics_lock = Lock()
         self.observations_ready = False
         self.background_collector_thread = StoppableThread(target=self._listen_for_updates, args=())
@@ -75,9 +78,18 @@ class SchedulerEnv(gymnasium.Env):
 
     def _listen_for_updates(self):
         metrics = self._get_raw_metrics()
-        # Get 1st number: actionable or not
-        # If not, grab lock and add to accumulated_metrics
-        # If yes, add to accumulated_metrics and signal to main thread
+        action_required = (metrics[0] == 1)
+        parsed_metrics = self.parser.parse(metrics[1:])
+        try:
+            self.accumulated_metrics_lock.acquire()
+            if not action_required:
+                self.accumulated_metrics.pop(0)
+                self.accumulated_metrics.append(parsed_metrics)
+            if action_required:
+                self.actionable_event_metrics = parsed_metrics
+                self.observations_ready = True
+        finally:
+            self.accumulated_metrics_lock.release()
 
     def _get_raw_metrics(self):
         metrics_per_task = len(self.parser.task_metrics)
