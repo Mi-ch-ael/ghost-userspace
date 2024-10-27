@@ -133,10 +133,14 @@ class SchedulerEnv(gymnasium.Env):
             return default_observation, \
                 -1, True, False, \
                     {"error": f"Actual run queue is too short to place this task on position {action}"}
-        # self._send_action(action)
-        # raw_metrics = self._get_raw_metrics()
-        # observation = self.parser.parse(raw_metrics)
-        # return observation, 0, False, False, {}
+        self._send_action(action)
+        while not self.observations_ready:
+            time.sleep(0.0001)
+        self.accumulated_metrics_lock.acquire()
+        observation = (*self.accumulated_metrics, self.actionable_event_metrics)
+        self.observations_ready = False
+        self.accumulated_metrics_lock.release()
+        return observation, 0, False, False, {}
 
     def reset(self, seed=None, options=None):
         """

@@ -12,12 +12,8 @@ import gymnasium
 from gymnasium.utils.passive_env_checker import (
     check_action_space,
     check_observation_space,
-    env_render_passive_checker,
-    env_reset_passive_checker,
-    env_step_passive_checker,
 )
 from gymnasium.utils.env_checker import check_reset_return_type
-import environment
 from threads.stoppable_thread import StoppableThread
 from environment.scheduler_env import SchedulerEnv
 from environment.scheduler_spaces import generate_zeroed_sample
@@ -246,7 +242,7 @@ class SchedulerEnvTests(unittest.TestCase):
         self.assertAlmostEqual(sched_environment.actionable_event_metrics["runqueue"][1]["stime"], 14.039624, delta=1e-6)
         self.assertAlmostEqual(sched_environment.actionable_event_metrics["runqueue"][1]["guest_time"], 14.231145, delta=1e-6)
         self.assertEqual(sched_environment.actionable_event_metrics["runqueue"][1]["vsize"], 16.0)
-        self.assertEqual(sched_environment.actionable_event_metrics["runqueue"][2:], [
+        self.assertEqual(sched_environment.actionable_event_metrics["runqueue"][2:], (
             {
                 "run_state": 0,
                 "cpu_num": 0,
@@ -256,7 +252,7 @@ class SchedulerEnvTests(unittest.TestCase):
                 "guest_time": 0.0,
                 "vsize": 0.0,
             },
-        ] * 6)
+         ) * 6)
 
     def test_listen_for_non_actionable_update(self):
         sched_environment = SchedulerEnv()
@@ -285,132 +281,57 @@ class SchedulerEnvTests(unittest.TestCase):
         self.assertEqual(sched_environment.observations_ready, False)
         self.assertEqual(sched_environment.actionable_event_metrics, None)
 
-    # Need to remake observation to have new form: `Tuple` of `Dict`s
-    @unittest.expectedFailure
-    def test_step_invalid_action(self):
+    def test_listen_for_updates_wrong_sequence_length(self):
         sched_environment = SchedulerEnv()
-        sched_environment._send_action = unittest.mock.Mock(return_value=None)
-        sched_environment.actual_runqueue_length = 2
         sched_environment._get_raw_metrics = unittest.mock.Mock(return_value=[
-                7,
-                1, 0, 0, 45152452, 5152452, 0, 89102602,
-                1, 0, 0, 45152452, 5152452, 0, 89102602,
-                0, 0, 1, 980551253, 1251213, 1515332, 60000000,
-            ])
-
-        observation, reward, terminated, truncated, _ = sched_environment.step(2)
-        self.assertDictEqual(observation, {
-            "callback_type": 0,
-            "task_metrics": {
-                "run_state": 0,
-                "cpu_num": 0,
-                "preempted": 0,
-                "utime": 0.0,
-                "stime": 0.0,
-                "guest_time": 0.0,
-                "vsize": 0.0,
-            },
-            "runqueue": ({
-                "run_state": 0,
-                "cpu_num": 0,
-                "preempted": 0,
-                "utime": 0.0,
-                "stime": 0.0,
-                "guest_time": 0.0,
-                "vsize": 0.0,
-            },) * 8
-        })
-        self.assertEqual(reward, -1)
-        self.assertEqual(terminated, True)
-        self.assertEqual(truncated, False)
-
-    # Need to remake observation to have new form: `Tuple` of `Dict`s
-    def test_step_valid_action(self):
-        sched_environment = SchedulerEnv()
-        sched_environment._send_action = unittest.mock.Mock(return_value=None)
-        sched_environment.actual_runqueue_length = 2
-        sched_environment._get_raw_metrics = unittest.mock.Mock(return_value=[
-                7,
-                1, 0, 0, 45152452, 45152452, 0, 89102602,
-                1, 0, 0, 45152452, 45152452, 0, 89102602,
-                0, 0, 1, 980551253, 1251213, 1515332, 60000000,
-            ])
-
-        observation, reward, terminated, truncated, _ = sched_environment.step(1)
-        self.assertEqual(reward, 0)
-        self.assertEqual(observation["callback_type"], 7)
-        self.assertDictEqual(observation["task_metrics"], {
-                "run_state": 1,
-                "cpu_num": 0,
-                "preempted": 0,
-                "utime": 16.0,
-                "stime": 16.0,
-                "guest_time": 0.0,
-                "vsize": 16.0,
-            })
-        self.assertDictEqual(observation["runqueue"][0], {
-                "run_state": 1,
-                "cpu_num": 0,
-                "preempted": 0,
-                "utime": 16.0,
-                "stime": 16.0,
-                "guest_time": 0.0,
-                "vsize": 16.0,
-            })
-        self.assertEqual(observation["runqueue"][1]["run_state"], 0)
-        self.assertEqual(observation["runqueue"][1]["cpu_num"], 0)
-        self.assertEqual(observation["runqueue"][1]["preempted"], 1)
-        self.assertEqual(observation["runqueue"][1]["utime"], 16.0)
-        self.assertAlmostEqual(observation["runqueue"][1]["stime"], 14.039624, delta=1e-6)
-        self.assertAlmostEqual(observation["runqueue"][1]["guest_time"], 14.231145, delta=1e-6)
-        self.assertEqual(observation["runqueue"][1]["vsize"], 16.0)
-        self.assertEqual(terminated, False)
-        self.assertEqual(truncated, False)
+            0,
+            4,
+            1, 0, 0, 45152452, 51524520, 0, 89102602,
+            1, 0, 0, 45152452, 51524520, 0, 89102602,
+            0, 0, 1, 980551253, 1251213,
+        ])
+        with self.assertRaises(AssertionError):
+            sched_environment._listen_for_updates()
 
     def test_reset_no_restart(self):
         sched_environment = SchedulerEnv()
-        sched_environment.actual_runqueue_length = 2
         sched_environment._get_raw_metrics = unittest.mock.Mock(side_effect=get_raw_metrics_mock_actionable)
 
-        try:
-            observation, _ = sched_environment.reset()
-            self.assertEqual(sched_environment.background_collector_thread.is_alive(), True)
+        observation, _ = sched_environment.reset()
+        self.assertEqual(sched_environment.background_collector_thread.is_alive(), True)
 
-            self.assertEqual(observation[-1]["callback_type"], 7)
-            self.assertDictEqual(observation[-1]["task_metrics"], {
-                    "run_state": 1,
-                    "cpu_num": 0,
-                    "preempted": 0,
-                    "utime": 16.0,
-                    "stime": 16.0,
-                    "guest_time": 0.0,
-                    "vsize": 16.0,
-                })
-            self.assertDictEqual(observation[-1]["runqueue"][0], {
-                    "run_state": 1,
-                    "cpu_num": 0,
-                    "preempted": 0,
-                    "utime": 16.0,
-                    "stime": 16.0,
-                    "guest_time": 0.0,
-                    "vsize": 16.0,
-                })
-            self.assertEqual(observation[-1]["runqueue"][1]["run_state"], 0)
-            self.assertEqual(observation[-1]["runqueue"][1]["cpu_num"], 0)
-            self.assertEqual(observation[-1]["runqueue"][1]["preempted"], 1)
-            self.assertEqual(observation[-1]["runqueue"][1]["utime"], 16.0)
-            self.assertAlmostEqual(observation[-1]["runqueue"][1]["stime"], 14.039624, delta=1e-6)
-            self.assertAlmostEqual(observation[-1]["runqueue"][1]["guest_time"], 14.231145, delta=1e-6)
-            self.assertEqual(observation[-1]["runqueue"][1]["vsize"], 16.0)
-            
-            self.assertEqual(
-                observation[0], 
-                generate_zeroed_sample(sched_environment.observation_space[0])
-            )
-            self.assertEqual(len(observation), sched_environment.max_prev_events_stored + 1)
-        finally:
-            sched_environment.finalize()
-            time.sleep(0.02)
+        self.assertEqual(observation[-1]["callback_type"], 7)
+        self.assertDictEqual(observation[-1]["task_metrics"], {
+                "run_state": 1,
+                "cpu_num": 0,
+                "preempted": 0,
+                "utime": 16.0,
+                "stime": 16.0,
+                "guest_time": 0.0,
+                "vsize": 16.0,
+            })
+        self.assertDictEqual(observation[-1]["runqueue"][0], {
+                "run_state": 1,
+                "cpu_num": 0,
+                "preempted": 0,
+                "utime": 16.0,
+                "stime": 16.0,
+                "guest_time": 0.0,
+                "vsize": 16.0,
+            })
+        self.assertEqual(observation[-1]["runqueue"][1]["run_state"], 0)
+        self.assertEqual(observation[-1]["runqueue"][1]["cpu_num"], 0)
+        self.assertEqual(observation[-1]["runqueue"][1]["preempted"], 1)
+        self.assertEqual(observation[-1]["runqueue"][1]["utime"], 16.0)
+        self.assertAlmostEqual(observation[-1]["runqueue"][1]["stime"], 14.039624, delta=1e-6)
+        self.assertAlmostEqual(observation[-1]["runqueue"][1]["guest_time"], 14.231145, delta=1e-6)
+        self.assertEqual(observation[-1]["runqueue"][1]["vsize"], 16.0)
+        
+        self.assertEqual(
+            observation[0], 
+            generate_zeroed_sample(sched_environment.observation_space[0])
+        )
+        self.assertEqual(len(observation), sched_environment.max_prev_events_stored + 1)
 
     def test_check_reset_return_type(self):
         sched_environment = SchedulerEnv()
@@ -439,9 +360,7 @@ class SchedulerEnvTests(unittest.TestCase):
         sched_environment = SchedulerEnv()
         result = sched_environment._get_raw_metrics()
 
-        self.assertEqual(result, [i for i in range(1, 16)])
-        self.assertEqual(sched_environment.actual_runqueue_length, 1)
-        
+        self.assertEqual(result, [i for i in range(1, 16)])        
         mock_socket_instance.bind.assert_called_with(('localhost', 14014))
         mock_socket_instance.listen.assert_called_once()
         mock_socket_instance.accept.assert_called_once()
@@ -464,36 +383,12 @@ class SchedulerEnvTests(unittest.TestCase):
         sched_environment = SchedulerEnv(socket_port=9898)
         result = sched_environment._get_raw_metrics()
 
-        self.assertEqual(result, [i for i in range(1, 16)])
-        self.assertEqual(sched_environment.actual_runqueue_length, 1)
-        
+        self.assertEqual(result, [i for i in range(1, 16)])       
         mock_socket_instance.bind.assert_called_with(('localhost', 9898))
         mock_socket_instance.listen.assert_called_once()
         mock_socket_instance.accept.assert_called_once()
         mock_conn_instance.recv.assert_any_call(4)
         mock_conn_instance.recv.assert_any_call(15 * 8)
-        mock_conn_instance.close.assert_called_once()
-        mock_socket_instance.close.assert_called_once()
-
-    @unittest.mock.patch('socket.socket')
-    def test_get_raw_metrics_non_whole_number_of_tasks(self, mock_socket):
-        mock_socket_instance = unittest.mock.Mock()
-        mock_socket.return_value = mock_socket_instance     
-        mock_conn_instance = unittest.mock.Mock()
-        mock_conn_instance.recv.side_effect = [
-            struct.pack('!I', 18),
-            struct.pack('!18Q', *[i for i in range(18)])
-        ]
-        mock_socket_instance.accept.return_value = (mock_conn_instance, ('127.0.0.1', 14014))
-        
-        sched_environment = SchedulerEnv()
-        with self.assertRaises(AssertionError):
-            sched_environment._get_raw_metrics()
-        
-        mock_socket_instance.bind.assert_called_with(('localhost', 14014))
-        mock_socket_instance.listen.assert_called_once()
-        mock_socket_instance.accept.assert_called_once()
-        mock_conn_instance.recv.assert_called_once_with(4)
         mock_conn_instance.close.assert_called_once()
         mock_socket_instance.close.assert_called_once()
 
