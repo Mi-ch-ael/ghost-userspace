@@ -8,6 +8,7 @@ from threads.stoppable_thread import StoppableThread
 from environment.observation_parser import LnCapObservationParser
 from environment.scheduler_spaces import generate_zeroed_sample
 
+
 class SchedulerEnv(gymnasium.Env):
     metadata = {"render_modes": []}
 
@@ -55,7 +56,7 @@ class SchedulerEnv(gymnasium.Env):
 
         self.socket_host = "localhost"
         self.socket_port = socket_port
-        self.receive_timeout_seconds = None # No timeout for receiving next metrics portion
+        self.receive_timeout_seconds = 0.01
         self.scheduler_port = scheduler_port
         self.share_counter = 0
         self.parser = LnCapObservationParser(self.observation_space[0], runqueue_cutoff_length, time_ln_cap, vsize_ln_cap)
@@ -67,20 +68,24 @@ class SchedulerEnv(gymnasium.Env):
         self.actionable_event_metrics = None
         self.accumulated_metrics_lock = Lock()
         self.observations_ready = False
-        self.background_collector_thread = StoppableThread(target=self._listen_for_updates, args=(), daemon=True)
+        self.background_collector_thread = StoppableThread(target=self._listen_for_updates, args=())
 
     def _start_collector(self):
         """Start background collector that waits for metrics."""
         self.background_collector_thread.start()
 
-    def finalize(self):
-        """Perform pre-shutdown tasks. For now, just stop background listening thread,
-        but may be used for dumping learning statistics, etc."""
+    def close(self):
+        """Release external resources and perform other cleanup. 
+        For now, just signal collector thread to stop."""
         self.background_collector_thread.stop()
 
     def _listen_for_updates(self):
         metrics_per_task = len(self.parser.task_metrics)
         metrics = self._get_raw_metrics()
+        if metrics is None:
+            # Timeout exceeded when getting new metrics. No worries, we'll retry in a bit.
+            # For now, check if we need to exit (this runs in a checker loop, so just return).
+            return
         assert (len(metrics) - 2) % metrics_per_task == 0
         action_required = (metrics[0] == 1)
         parsed_metrics = self.parser.parse(metrics[1:])
@@ -99,8 +104,11 @@ class SchedulerEnv(gymnasium.Env):
     def _get_raw_metrics(self):
         connection = None
         metrics_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        metrics_socket.settimeout(self.receive_timeout_seconds)
         try:
+            metrics_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            linger_struct = struct.pack('ii', 1, 0)
+            metrics_socket.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, linger_struct)
+            metrics_socket.settimeout(self.receive_timeout_seconds)
             metrics_socket.bind((self.socket_host, self.socket_port))
             metrics_socket.listen()
             connection, address = metrics_socket.accept()
@@ -111,6 +119,8 @@ class SchedulerEnv(gymnasium.Env):
             sequence_data = connection.recv(length * struct.calcsize('!Q'))
             sequence = struct.unpack(f'!{length}Q', sequence_data)
             return list(sequence)
+        except OSError:
+            return None
         finally:
             metrics_socket.close()
             connection and connection.close()

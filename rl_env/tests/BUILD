@@ -42,6 +42,7 @@ py_test(
         "//rl_env/threads:threads",
     ],
     size = "small",
+    tags = ["exclusive"],
 )
 
 py_test(
@@ -54,4 +55,5 @@ py_test(
         "//rl_env/threads:threads",
     ],
     size = "small",
+    tags = ["exclusive"],
 )

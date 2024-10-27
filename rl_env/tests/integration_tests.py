@@ -10,11 +10,13 @@ import os
 import sys
 import time
 import numpy as np
+from contextlib import contextmanager
 sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))
 from environment.scheduler_env import SchedulerEnv
 from threads.stoppable_thread import StoppableThread
 
-def send_sequence(sequence, host='localhost', port=14014):
+def send_sequence(sequence, sleep_before=0, host='localhost', port=14014):
+    sleep_before and time.sleep(sleep_before)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((host, port))
         
@@ -43,22 +45,32 @@ def get_raw_metrics_mock_actionable():
         0, 0, 1, 980551253, 1251213, 1515332, 60000000,
     ]
 
+@contextmanager
+def thread_context_manager(stoppable_thread: StoppableThread, timeout_seconds=0.02):
+    try:
+        yield
+    finally:
+        if stoppable_thread.is_alive():
+            stoppable_thread.stop()
+            time.sleep(timeout_seconds)
+            assert not stoppable_thread.is_alive()
+
 
 class IntegrationTests(unittest.TestCase):
     def test_example_usage_of_stoppable_thread(self):
         def payload():
-            time.sleep(0.1)
+            time.sleep(0.0001)
         stoppable_thread = StoppableThread(target=payload, args=(), name="test-thread")
         stoppable_thread.start()
-        time.sleep(0.2)
+        time.sleep(0.0002)
         self.assertEqual(stoppable_thread.is_alive(), True)
         stoppable_thread.stop()
-        time.sleep(0.2)
+        time.sleep(0.0002)
         self.assertEqual(stoppable_thread.is_alive(), False)
 
     def test_thread_communication_on_non_actionable_callback(self):
         sched_environment = SchedulerEnv()
-        try:
+        with(thread_context_manager(sched_environment.background_collector_thread, 1)):
             sched_environment._get_raw_metrics = unittest.mock.Mock(side_effect=get_raw_metrics_mock_non_actionable)
             sched_environment._start_collector()
             time.sleep(0.5)
@@ -78,14 +90,10 @@ class IntegrationTests(unittest.TestCase):
             )
             self.assertEqual(sched_environment.observations_ready, False)
             self.assertEqual(sched_environment.actionable_event_metrics, None)
-        finally:
-            sched_environment.finalize()
-            time.sleep(1)
-            self.assertEqual(sched_environment.background_collector_thread.is_alive(), False)
 
     def test_thread_communication_on_actionable_callback(self):
         sched_environment = SchedulerEnv()
-        try:
+        with(thread_context_manager(sched_environment.background_collector_thread, 1)):
             sched_environment._get_raw_metrics = unittest.mock.Mock(side_effect=get_raw_metrics_mock_actionable)
             sched_environment._start_collector()
             time.sleep(0.5)
@@ -105,15 +113,12 @@ class IntegrationTests(unittest.TestCase):
             )
             self.assertEqual(sched_environment.observations_ready, True)
             self.assertEqual(sched_environment.actionable_event_metrics["callback_type"], 4)
-        finally:
-            sched_environment.finalize()
-            time.sleep(1)
-            self.assertEqual(sched_environment.background_collector_thread.is_alive(), False)
 
     def test_get_raw_metrics_positive(self):
         sequence_to_send = [i for i in range(15)]
         port = 14014
         sched_environment = SchedulerEnv()
+        sched_environment.receive_timeout_seconds = 10
         result_queue = queue.Queue()
         def run_server(result_queue):
             try:
@@ -125,7 +130,6 @@ class IntegrationTests(unittest.TestCase):
 
         server_thread = threading.Thread(target=run_server, args=(result_queue,))
         server_thread.start()
-        time.sleep(1)
         
         send_sequence(sequence_to_send, port=port)        
         server_thread.join()
@@ -137,8 +141,7 @@ class IntegrationTests(unittest.TestCase):
         sequence_to_send = [0, *[i + 1 for i in range(15)]]
         port = 14014
         sched_environment = SchedulerEnv()
-        sched_environment.receive_timeout_seconds = 0.5
-        try:
+        with thread_context_manager(sched_environment.background_collector_thread, 0.5):
             sched_environment._start_collector()
             time.sleep(0.1)
             send_sequence(sequence_to_send, port=port)
@@ -148,8 +151,6 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(sched_environment.accumulated_metrics[0]["callback_type"], 0)
             self.assertEqual(sched_environment.accumulated_metrics[-1]["callback_type"], 1)
             self.assertEqual(sched_environment.accumulated_metrics_lock.locked(), False)
-        finally:
-            sched_environment.finalize()
 
     def test_reset_first_callback_actionable(self):
         sched_environment = gymnasium.make('rl_env/SchedulerEnv-v0')
@@ -160,14 +161,15 @@ class IntegrationTests(unittest.TestCase):
             1, 0, 0, 45152452, 51524520, 0, 89102602,
             0, 0, 1, 980551253, 1251213, 1515332, 60000000,
         ]
-        sending_thread = threading.Thread(target=send_sequence, args=(metrics_to_send,))
-        sending_thread.start()
-        observation, _ = sched_environment.reset()
-        sending_thread.join()
-        self.assertEqual(len(observation), 3)
-        self.assertEqual(observation[0]["callback_type"], 0)
-        self.assertEqual(observation[1]["callback_type"], 0)
-        self.assertEqual(observation[2]["callback_type"], 7)
+        with thread_context_manager(sched_environment.unwrapped.background_collector_thread):
+            sending_thread = threading.Thread(target=send_sequence, args=(metrics_to_send, 0.001))
+            sending_thread.start()
+            observation, _ = sched_environment.reset()
+            sending_thread.join()
+            self.assertEqual(len(observation), 3)
+            self.assertEqual(observation[0]["callback_type"], 0)
+            self.assertEqual(observation[1]["callback_type"], 0)
+            self.assertEqual(observation[2]["callback_type"], 7)
 
     def test_reset_non_actionable_then_actionable(self):
         metrics_to_send_1 = [
@@ -188,47 +190,46 @@ class IntegrationTests(unittest.TestCase):
             success = False
             while not success:
                 try:
-                    send_sequence(metrics_to_send_1)
+                    send_sequence(metrics_to_send_1, 0.0001)
                     success = True
                 except ConnectionRefusedError:
                     print("Connection refused, waiting")
-                    time.sleep(0.0001)
             success = False
             while not success:
                 try:
-                    send_sequence(metrics_to_send_2)
+                    send_sequence(metrics_to_send_2, 0.0001)
                     success = True
                 except ConnectionRefusedError:
                     print("Connection refused, waiting")
-                    time.sleep(0.0001)
 
         sched_environment = gymnasium.make('rl_env/SchedulerEnv-v0')
-        sending_thread = threading.Thread(target=send_metrics_payload, args=())
-        sending_thread.start()
-        observation, _ = sched_environment.reset()
-        sending_thread.join()
-        self.assertEqual(len(observation), 3)
-        self.assertEqual(observation[0]["callback_type"], 0)
-        self.assertEqual(observation[1]["callback_type"], 7)
-        self.assertEqual(observation[2]["callback_type"], 4)
-        self.assertDictEqual(observation[-1]["task_metrics"], {
-            "run_state": 1,
-            "cpu_num": 0,
-            "preempted": 0,
-            "utime": np.array([16.0], dtype=np.float32),
-            "stime": np.array([16.0], dtype=np.float32),
-            "guest_time": np.array([0.0], dtype=np.float32),
-            "vsize": np.array([16.0], dtype=np.float32),
-        })
-        self.assertDictEqual(observation[-1]["runqueue"][0], {
-            "run_state": 1,
-            "cpu_num": 0,
-            "preempted": 0,
-            "utime": np.array([16.0], dtype=np.float32),
-            "stime": np.array([16.0], dtype=np.float32),
-            "guest_time": np.array([0.0], dtype=np.float32),
-            "vsize": np.array([16.0], dtype=np.float32),
-        })
+        with thread_context_manager(sched_environment.unwrapped.background_collector_thread):
+            sending_thread = threading.Thread(target=send_metrics_payload, args=())
+            sending_thread.start()
+            observation, _ = sched_environment.reset()
+            sending_thread.join()
+            self.assertEqual(len(observation), 3)
+            self.assertEqual(observation[0]["callback_type"], 0)
+            self.assertEqual(observation[1]["callback_type"], 7)
+            self.assertEqual(observation[2]["callback_type"], 4)
+            self.assertDictEqual(observation[-1]["task_metrics"], {
+                "run_state": 1,
+                "cpu_num": 0,
+                "preempted": 0,
+                "utime": np.array([16.0], dtype=np.float32),
+                "stime": np.array([16.0], dtype=np.float32),
+                "guest_time": np.array([0.0], dtype=np.float32),
+                "vsize": np.array([16.0], dtype=np.float32),
+            })
+            self.assertDictEqual(observation[-1]["runqueue"][0], {
+                "run_state": 1,
+                "cpu_num": 0,
+                "preempted": 0,
+                "utime": np.array([16.0], dtype=np.float32),
+                "stime": np.array([16.0], dtype=np.float32),
+                "guest_time": np.array([0.0], dtype=np.float32),
+                "vsize": np.array([16.0], dtype=np.float32),
+            })
 
 class TestIntegrationSendAction(unittest.TestCase):
     def setUp(self):

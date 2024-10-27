@@ -1,11 +1,11 @@
 import unittest
-import numpy as np
 import os
 import sys
 import unittest.mock
 import struct
 import socket
 import time
+from contextlib import contextmanager
 
 sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir))
 import gymnasium
@@ -37,6 +37,15 @@ def get_raw_metrics_mock_actionable():
         1, 0, 0, 45152452, 45152452, 0, 89102602,
         0, 0, 1, 980551253, 1251213, 1515332, 60000000,
     ]
+
+@contextmanager
+def thread_context_manager(stoppable_thread: StoppableThread, timeout_seconds=0.02):
+    try:
+        yield
+    finally:
+        if stoppable_thread.is_alive():
+            stoppable_thread.stop()
+            time.sleep(timeout_seconds)
 
 class SchedulerEnvTests(unittest.TestCase):
     maxDiff = None
@@ -193,7 +202,7 @@ class SchedulerEnvTests(unittest.TestCase):
         sched_environment = SchedulerEnv()
         sched_environment._start_collector()
         time.sleep(0.02)
-        sched_environment.finalize()
+        sched_environment.close()
         time.sleep(0.02)
         self.assertEqual(sched_environment.background_collector_thread.is_alive(), False)
 
@@ -297,46 +306,48 @@ class SchedulerEnvTests(unittest.TestCase):
         sched_environment = SchedulerEnv()
         sched_environment._get_raw_metrics = unittest.mock.Mock(side_effect=get_raw_metrics_mock_actionable)
 
-        observation, _ = sched_environment.reset()
-        self.assertEqual(sched_environment.background_collector_thread.is_alive(), True)
+        with(thread_context_manager(sched_environment.background_collector_thread)):
+            observation, _ = sched_environment.reset()
+            self.assertEqual(sched_environment.background_collector_thread.is_alive(), True)
 
-        self.assertEqual(observation[-1]["callback_type"], 7)
-        self.assertDictEqual(observation[-1]["task_metrics"], {
-                "run_state": 1,
-                "cpu_num": 0,
-                "preempted": 0,
-                "utime": 16.0,
-                "stime": 16.0,
-                "guest_time": 0.0,
-                "vsize": 16.0,
-            })
-        self.assertDictEqual(observation[-1]["runqueue"][0], {
-                "run_state": 1,
-                "cpu_num": 0,
-                "preempted": 0,
-                "utime": 16.0,
-                "stime": 16.0,
-                "guest_time": 0.0,
-                "vsize": 16.0,
-            })
-        self.assertEqual(observation[-1]["runqueue"][1]["run_state"], 0)
-        self.assertEqual(observation[-1]["runqueue"][1]["cpu_num"], 0)
-        self.assertEqual(observation[-1]["runqueue"][1]["preempted"], 1)
-        self.assertEqual(observation[-1]["runqueue"][1]["utime"], 16.0)
-        self.assertAlmostEqual(observation[-1]["runqueue"][1]["stime"], 14.039624, delta=1e-6)
-        self.assertAlmostEqual(observation[-1]["runqueue"][1]["guest_time"], 14.231145, delta=1e-6)
-        self.assertEqual(observation[-1]["runqueue"][1]["vsize"], 16.0)
-        
-        self.assertEqual(
-            observation[0], 
-            generate_zeroed_sample(sched_environment.observation_space[0])
-        )
-        self.assertEqual(len(observation), sched_environment.max_prev_events_stored + 1)
+            self.assertEqual(observation[-1]["callback_type"], 7)
+            self.assertDictEqual(observation[-1]["task_metrics"], {
+                    "run_state": 1,
+                    "cpu_num": 0,
+                    "preempted": 0,
+                    "utime": 16.0,
+                    "stime": 16.0,
+                    "guest_time": 0.0,
+                    "vsize": 16.0,
+                })
+            self.assertDictEqual(observation[-1]["runqueue"][0], {
+                    "run_state": 1,
+                    "cpu_num": 0,
+                    "preempted": 0,
+                    "utime": 16.0,
+                    "stime": 16.0,
+                    "guest_time": 0.0,
+                    "vsize": 16.0,
+                })
+            self.assertEqual(observation[-1]["runqueue"][1]["run_state"], 0)
+            self.assertEqual(observation[-1]["runqueue"][1]["cpu_num"], 0)
+            self.assertEqual(observation[-1]["runqueue"][1]["preempted"], 1)
+            self.assertEqual(observation[-1]["runqueue"][1]["utime"], 16.0)
+            self.assertAlmostEqual(observation[-1]["runqueue"][1]["stime"], 14.039624, delta=1e-6)
+            self.assertAlmostEqual(observation[-1]["runqueue"][1]["guest_time"], 14.231145, delta=1e-6)
+            self.assertEqual(observation[-1]["runqueue"][1]["vsize"], 16.0)
+            
+            self.assertEqual(
+                observation[0], 
+                generate_zeroed_sample(sched_environment.observation_space[0])
+            )
+            self.assertEqual(len(observation), sched_environment.max_prev_events_stored + 1)
 
     def test_check_reset_return_type(self):
         sched_environment = SchedulerEnv()
         sched_environment._get_raw_metrics = unittest.mock.Mock(side_effect=get_raw_metrics_mock_actionable)
-        check_reset_return_type(sched_environment)
+        with(thread_context_manager(sched_environment.background_collector_thread)):
+            check_reset_return_type(sched_environment)
 
     def test_check_action_space(self):
         sched_environment = gymnasium.make('rl_env/SchedulerEnv-v0')
@@ -399,8 +410,8 @@ class SchedulerEnvTests(unittest.TestCase):
         mock_socket_instance.bind.side_effect = socket.error("Socket bind error")
         sched_environment = SchedulerEnv()
 
-        with self.assertRaises(socket.error):
-            sched_environment._get_raw_metrics()
+        result = sched_environment._get_raw_metrics()
+        self.assertIs(result, None)
         
         mock_socket_instance.close.assert_called_once()
 
@@ -411,8 +422,8 @@ class SchedulerEnvTests(unittest.TestCase):
         mock_socket_instance.accept.side_effect = socket.error("Socket accept error")
         sched_environment = SchedulerEnv()
 
-        with self.assertRaises(socket.error):
-            sched_environment._get_raw_metrics()
+        result = sched_environment._get_raw_metrics()
+        self.assertIs(result, None)
         
         mock_socket_instance.close.assert_called_once()
 
@@ -425,8 +436,8 @@ class SchedulerEnvTests(unittest.TestCase):
         mock_conn_instance.recv.side_effect = socket.error("Socket recv error")
         sched_environment = SchedulerEnv()
 
-        with self.assertRaises(socket.error):
-            sched_environment._get_raw_metrics()
+        result = sched_environment._get_raw_metrics()
+        self.assertIs(result, None)
         
         mock_conn_instance.close.assert_called_once()
         mock_socket_instance.close.assert_called_once()
