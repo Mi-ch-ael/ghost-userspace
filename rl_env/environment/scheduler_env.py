@@ -101,6 +101,15 @@ class SchedulerEnv(gymnasium.Env):
         finally:
             self.accumulated_metrics_lock.release()
 
+    def _recv_n(self, sock: socket.socket, size: int):
+        data = b""
+        while len(data) < size:
+            packet = sock.recv(size - len(data))
+            if not packet:
+                raise ConnectionResetError("Scheduler has disconnected")
+            data += packet
+        return data
+
     def _get_raw_metrics(self):
         connection = None
         metrics_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -113,10 +122,10 @@ class SchedulerEnv(gymnasium.Env):
             metrics_socket.listen()
             connection, address = metrics_socket.accept()
             print(f"SchedulerEnv._get_raw_metrics: Connected by address: {address}")
-            length_data = connection.recv(struct.calcsize('!I'))
+            length_data = self._recv_n(connection, struct.calcsize('!I'))
             length = struct.unpack('!I', length_data)[0]
             print(f"SchedulerEnv._get_raw_metrics: unpacked length: {length}")
-            sequence_data = connection.recv(length * struct.calcsize('!Q'))
+            sequence_data = self._recv_n(connection, length * struct.calcsize('!Q'))
             sequence = struct.unpack(f'!{length}Q', sequence_data)
             return list(sequence)
         except OSError:

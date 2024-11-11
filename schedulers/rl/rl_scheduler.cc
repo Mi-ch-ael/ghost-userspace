@@ -116,6 +116,66 @@ void RlScheduler::Migrate(RlTask* task, Cpu cpu, BarrierToken seqnum) {
   enclave()->GetAgent(cpu)->Ping();
 }
 
+void RlScheduler::MigrateWithTelemetry(RlTask* task, Cpu cpu, BarrierToken seqnum, SentCallbackType callback_type) {
+  CHECK_EQ(task->run_state, RlTaskState::kRunnable);
+  CHECK_EQ(task->cpu, -1);
+
+  CpuState* cs = cpu_state(cpu);
+  const Channel* channel = cs->channel.get();
+  CHECK(channel->AssociateTask(task->gtid, seqnum, /*status=*/nullptr));
+
+  GHOST_DPRINT(3, stderr, "Migrating task %s to cpu %d", task->gtid.describe(),
+               cpu.id());
+  task->cpu = cpu.id();
+
+  if (this->ShareTask(task, callback_type, false)) {
+    GHOST_DPRINT(2, stderr, "Failed to send information about non-actionable callback.");
+  }
+
+  // Make task visible in the new runqueue *after* changing the association
+  // (otherwise the task can get oncpu while producing into the old queue).
+  cs->run_queue.Enqueue(task);
+
+  // Get the agent's attention so it notices the new task.
+  enclave()->GetAgent(cpu)->Ping();
+}
+
+void RlScheduler::MigrateWithHint(RlTask* task, Cpu cpu, BarrierToken seqnum, SentCallbackType callback_type) {
+  CHECK_EQ(task->run_state, RlTaskState::kRunnable);
+  CHECK_EQ(task->cpu, -1);
+
+  CpuState* cs = cpu_state(cpu);
+  const Channel* channel = cs->channel.get();
+  CHECK(channel->AssociateTask(task->gtid, seqnum, /*status=*/nullptr));
+
+  GHOST_DPRINT(3, stderr, "Migrating task %s to cpu %d", task->gtid.describe(),
+               cpu.id());
+  task->cpu = cpu.id();
+
+  if (this->ShareTask(task, callback_type, true)) {
+    GHOST_DPRINT(2, stderr, "Failed to send information about actionable callback. Doing default action.");
+    cs->run_queue.Enqueue(task);
+    enclave()->GetAgent(cpu)->Ping();
+    return;
+  }
+
+  uint32_t place;
+  if (this->ReceiveAction(&place)) {
+    GHOST_DPRINT(2, stderr, "Failed to receive action hint in time. Doing default action.");
+    cs->run_queue.Enqueue(task);
+    enclave()->GetAgent(cpu)->Ping();
+    return;
+  }
+
+  GHOST_DPRINT(2, stderr, "Enqueue task to place %d in the queue", place);
+  // Make task visible in the new runqueue *after* changing the association
+  // (otherwise the task can get oncpu while producing into the old queue).
+  cs->run_queue.EnqueueTo(task, place);
+
+  // Get the agent's attention so it notices the new task.
+  enclave()->GetAgent(cpu)->Ping();
+}
+
 void RlScheduler::UpdateTask(RlTask* task, std::ifstream& instream) {
   const int utime_offset = 13;
   const int stime_offset = 14;
@@ -154,10 +214,17 @@ void RlScheduler::UpdateTask(RlTask* task, std::ifstream& instream) {
 #endif
 
 int HandleClient(int client_socket, uint32_t* buf) {
+  struct timeval timeout;
+  timeout.tv_sec = 0;
+  timeout.tv_usec = 20000;
+  if (setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+    GHOST_DPRINT(3, stderr, "Failed to set socket receive timeout. HandleClient aborted.");
+    return 1;
+  }
   uint32_t num;
   ssize_t received_bytes = recv(client_socket, &num, sizeof(num), 0);
   if (received_bytes != sizeof(num)) {
-    absl::FPrintF(stderr, "Failed to receive data. Skipped event. Awaiting termination.\n");
+    GHOST_DPRINT(3, stderr, "Failed to receive data. HandleClient aborted.");
     close(client_socket);
     return 1;
   }
@@ -166,68 +233,97 @@ int HandleClient(int client_socket, uint32_t* buf) {
   return 0;
 }
 
-int ReceiveAction(uint16_t port, uint32_t* buf) {
+int RlScheduler::ReceiveAction(uint32_t* buf) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   if (sock == -1) {
-    absl::FPrintF(stderr, "Failed to create socket. Skipped event. Awaiting termination.\n");
+    GHOST_DPRINT(3, stderr, "Failed to create socket. ReceiveAction aborted.");
     return 1;
   }
+
+  struct timeval timeout;
+  timeout.tv_sec = 0;
+  timeout.tv_usec = 20000;
+  if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+    GHOST_DPRINT(3, stderr, "Failed to set socket receive timeout. ReceiveAction aborted.");
+    return 1;
+  }
+  if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) < 0) {
+    GHOST_DPRINT(3, stderr, "Failed to set socket send timeout. ReceiveAction aborted.");
+    return 1;
+  }
+
   sockaddr_in server_addr;
   server_addr.sin_family = AF_INET;
-  server_addr.sin_port = htons(port);
+  server_addr.sin_port = htons(this->listen_socket_port_);
   server_addr.sin_addr.s_addr = INADDR_ANY;
   if (bind(sock, (sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
-    absl::FPrintF(stderr, "Failed to bind socket. Skipped event. Awaiting termination.\n");
+    GHOST_DPRINT(3, stderr, "Failed to bind socket. ReceiveAction aborted.");
     close(sock);
     return 1;
   }
   if (listen(sock, 1) == -1) {
-    absl::FPrintF(stderr, "Failed to listen on socket. Skipped event. Awaiting termination.\n");
+    GHOST_DPRINT(3, stderr, "Failed to listen on socket. ReceiveAction aborted.");
     close(sock);
     return 1;
   }
 
-  absl::FPrintF(stdout, "Listening on port %u\n", port);
+  GHOST_DPRINT(3, stdout, "Listening on port %u\n", this->listen_socket_port_);
   int client_socket = accept(sock, nullptr, nullptr);
   close(sock);
   if (client_socket == -1) {
-    absl::FPrintF(stderr, "Failed to accept connection. Skipped event. Awaiting termination.\n");
+    GHOST_DPRINT(3, stderr, "Failed to accept connection. ReceiveAction aborted.");
     return 1;
   }
   int status = HandleClient(client_socket, buf);
   return status;
 }
 
-void SendSequence(std::vector<uint64_t>& sequence, uint16_t port) {
+int SendSequence(std::vector<uint64_t>& sequence, uint16_t port) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   if (sock == -1) {
-    absl::FPrintF(stderr, "Failed to create socket. Skipped event. Awaiting termination.\n");
-    return;
+    GHOST_DPRINT(3, stderr, "Failed to create socket. SendSequence aborted.");
+    return 1;
   }
+
+  struct timeval timeout;
+  timeout.tv_sec = 0;
+  timeout.tv_usec = 1000;
+  if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) < 0) {
+    GHOST_DPRINT(3, stderr, "Failed to set socket send timeout. SendSequence aborted.");
+    return 1;
+  }
+  if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+    GHOST_DPRINT(3, stderr, "Failed to set socket receive timeout. SendSequence aborted.");
+    return 1;
+  }
+
   sockaddr_in server_addr;
   server_addr.sin_family = AF_INET;
   server_addr.sin_port = htons(port);
   inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
   if (connect(sock, (sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
-    absl::FPrintF(stderr, "Failed to connect. Skipped event. Awaiting termination.\n");
+    GHOST_DPRINT(3, stderr, "Failed to connect. SendSequence aborted.");
     close(sock);
-    return;
+    return 1;
   }
 
   uint32_t length = htonl(sequence.size());
   if (send(sock, &length, sizeof(length), 0) == -1) {
-    absl::FPrintF(stderr, "Failed to send. Skipped event. Awaiting termination.\n");
+    GHOST_DPRINT(3, stderr, "Failed to send. SendSequence aborted.");
     close(sock);
-    return;
+    return 1;
   }    
   for (int i = 0; i < sequence.size(); ++i) {
     uint64_t net_num = htonll(sequence[i]);
     sequence[i] = net_num;
   }
   if (send(sock, sequence.data(), sequence.size() * sizeof(uint64_t), 0) == -1) {
-    absl::FPrintF(stderr, "Failed to send. Skipped event. Awaiting termination.\n");
+    GHOST_DPRINT(3, stderr, "Failed to send. SendSequence aborted.");
+    close(sock);
+    return 1;
   }
   close(sock);
+  return 0;
 }
 
 void AddTaskInfoToMetrics(const RlTask* task, std::vector<uint64_t>& vec) {
@@ -240,8 +336,13 @@ void AddTaskInfoToMetrics(const RlTask* task, std::vector<uint64_t>& vec) {
   vec.push_back((uint64_t)task->vsize);
 }
 
-void RlScheduler::ShareTask(const RlTask* task, const SentCallbackType callback_type) {
+int RlScheduler::ShareTask(const RlTask* task, const SentCallbackType callback_type, bool action_expected) {
   std::vector<uint64_t> metrics = std::vector<uint64_t>();
+  if (action_expected) {
+    metrics.push_back((uint64_t)1);
+  } else {
+    metrics.push_back((uint64_t)0);
+  }
   metrics.push_back((uint64_t)callback_type);
   AddTaskInfoToMetrics(task, metrics);
   if (task->cpu >= 0) {
@@ -250,7 +351,7 @@ void RlScheduler::ShareTask(const RlTask* task, const SentCallbackType callback_
       AddTaskInfoToMetrics(cur_task, metrics);
     }
   }
-  SendSequence(metrics, this->target_socket_port_);
+  return SendSequence(metrics, this->target_socket_port_);
 }
 
 void RlScheduler::TaskNew(RlTask* task, const Message& msg) {
@@ -264,13 +365,13 @@ void RlScheduler::TaskNew(RlTask* task, const Message& msg) {
     pid_t tid = Gtid(payload->gtid).tid();
     pid_t pid = pidOf(tid);
     std::string stat_file_path = "/proc/" + std::to_string(pid) + "/task/" + std::to_string(tid) + "/stat";
-    absl::FPrintF(stdout, "Reading file %s\n", stat_file_path);
+    GHOST_DPRINT(4, stdout, "Reading file %s", stat_file_path);
     std::ifstream statFile(stat_file_path);
     if (!statFile.is_open()) {
-      absl::FPrintF(stderr, "Failed to open /proc/%d/task/%d/stat\n", pid, tid);
+      GHOST_DPRINT(3, stderr, "Failed to open /proc/%d/task/%d/stat", pid, tid);
     } else {
       this->UpdateTask(task, statFile);
-      absl::FPrintF(stdout, "Updated task\n");
+      GHOST_DPRINT(4, stdout, "Updated task");
       statFile.close();
     }
   }
@@ -278,16 +379,10 @@ void RlScheduler::TaskNew(RlTask* task, const Message& msg) {
   if (payload->runnable) {
     task->run_state = RlTaskState::kRunnable;
     Cpu cpu = AssignCpu(task);
-    Migrate(task, cpu, msg.seqnum());
+    MigrateWithHint(task, cpu, msg.seqnum(), SentCallbackType::kTaskNew);
   } else {
     // Wait until task becomes runnable to avoid race between migration
     // and MSG_TASK_WAKEUP showing up on the default channel.
-  }
-  this->ShareTask(task, SentCallbackType::kTaskNew);
-  uint32_t action;
-  int status = ReceiveAction(this->listen_socket_port_, &action);
-  if (!status) {
-    absl::FPrintF(stderr, "Received action #%u\n", action);
   }
 }
 
@@ -510,6 +605,21 @@ void RlRq::Enqueue(RlTask* task) {
     rq_.push_front(task);
   else
     rq_.push_back(task);
+}
+
+void RlRq::EnqueueTo(RlTask* task, uint32_t place, bool respect_prio_boost) {
+  CHECK_GE(task->cpu, 0);
+  CHECK_EQ(task->run_state, RlTaskState::kRunnable);
+
+  task->run_state = RlTaskState::kQueued;
+
+  absl::MutexLock lock(&mu_);
+  if (respect_prio_boost && task->prio_boost) {
+    rq_.push_front(task);
+  }
+  else {
+    rq_.insert(rq_.begin() + place, task);
+  }
 }
 
 RlTask* RlRq::Dequeue() {

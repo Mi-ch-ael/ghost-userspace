@@ -24,7 +24,7 @@ void SimpleExp() {
   printf("\nStarting simple worker\n");
   GhostThread t(GhostThread::KernelScheduler::kGhost, [] {
     fprintf(stderr, "hello world!\n");
-    absl::SleepFor(absl::Milliseconds(10));
+    absl::SleepFor(absl::Milliseconds(1));
     fprintf(stderr, "fantastic nap!\n");
     // Verify that a ghost thread implicitly clones itself in the ghost
     // scheduling class.
@@ -41,10 +41,11 @@ void SimpleExp() {
 }  // namespace ghost
 
 int main() {
-  {
+  for (int i = 0; i < 10; ++i) {
     printf("SimpleExp\n");
     ghost::ScopedTime time;
     ghost::SimpleExp();
+    absl::SleepFor(absl::Milliseconds(10));
   }
   return 0;
 }

@@ -452,9 +452,9 @@ class SchedulerEnvTests(unittest.TestCase):
         mock_conn_instance.recv.side_effect = [struct.pack('!I', 15), b'']
         sched_environment = SchedulerEnv()
         
-        with self.assertRaises(struct.error):
-            sched_environment._get_raw_metrics()
+        metrics = sched_environment._get_raw_metrics()
         
+        self.assertIs(metrics, None)
         mock_conn_instance.close.assert_called_once()
         mock_socket_instance.close.assert_called_once()
 

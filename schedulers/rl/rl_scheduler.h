@@ -84,6 +84,12 @@ class RlRq {
   RlTask* Dequeue();
   void Enqueue(RlTask* task);
 
+  // Enqueue `task` in the specific place of the runqueue.
+  //
+  // This is used to apply RL scheduling decisions. `place` must not be more than queue size.
+  // If `respect_prio_boost` is `true`, prio-boosted tasks will still be pushed to the front of runqueue.
+  void EnqueueTo(RlTask* task, uint32_t place, bool respect_prio_boost = true);
+
   // Erase 'task' from the runqueue.
   //
   // Caller must ensure that 'task' is on the runqueue in the first place
@@ -137,7 +143,9 @@ class RlScheduler : public BasicDispatchScheduler<RlTask> {
   // Update `task` with stat data from `instream` 
   void UpdateTask(RlTask* task, std::ifstream& instream);
   // Share `task` via a socket
-  void ShareTask(const RlTask* task, const SentCallbackType callback_type);
+  int ShareTask(const RlTask* task, const SentCallbackType callback_type, bool action_expected);
+  // Receive action hint via a socket
+  int ReceiveAction(uint32_t* action);
 
   static constexpr int kDebugRunqueue = 1;
   static constexpr int kCountAllTasks = 2;
@@ -158,6 +166,8 @@ class RlScheduler : public BasicDispatchScheduler<RlTask> {
   void TaskOffCpu(RlTask* task, bool blocked, bool from_switchto);
   void TaskOnCpu(RlTask* task, Cpu cpu);
   void Migrate(RlTask* task, Cpu cpu, BarrierToken seqnum);
+  void MigrateWithTelemetry(RlTask* task, Cpu cpu, BarrierToken seqnum, SentCallbackType callback_type);
+  void MigrateWithHint(RlTask* task, Cpu cpu, BarrierToken seqnum, SentCallbackType callback_type);
   Cpu AssignCpu(RlTask* task);
   void DumpAllTasks();
 
