@@ -34,7 +34,9 @@
 #define GHOST_DPRINT(level, target, fmt, ...)       \
   do {                                              \
     if (verbose() < level) break;                   \
-    absl::FPrintF(target, fmt "\n", ##__VA_ARGS__); \
+    char thread_name[16] = "unknown";               \
+    pthread_getname_np(pthread_self(), thread_name, sizeof(thread_name));        \
+    absl::FPrintF(target, "[%s] " fmt "\n", thread_name, ##__VA_ARGS__); \
   } while (0)
 
 #define GHOST_ERROR(fmt, ...)                          \
