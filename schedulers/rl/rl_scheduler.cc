@@ -138,7 +138,9 @@ void RlScheduler::MigrateWithTelemetry(RlTask* task, Cpu cpu, BarrierToken seqnu
   task->cpu = cpu.id();
 
   if (this->ShareTask(task, callback_type, false)) {
-    GHOST_DPRINT(2, stderr, "Failed to send information about non-actionable callback.");
+    GHOST_DPRINT(2, stderr, 
+                  "Failed to send information about non-actionable callback for %s.",
+                  task->gtid.describe());
   }
 
   // Make task visible in the new runqueue *after* changing the association
@@ -162,7 +164,9 @@ void RlScheduler::MigrateWithHint(RlTask* task, Cpu cpu, BarrierToken seqnum, Se
   task->cpu = cpu.id();
 
   if (this->ShareTask(task, callback_type, true)) {
-    GHOST_DPRINT(2, stderr, "Failed to send information about actionable callback. Doing default action.");
+    GHOST_DPRINT(2, stderr, 
+                  "Failed to send information about actionable callback for %s. Doing default action.",
+                  task->gtid.describe());
     cs->run_queue.Enqueue(task);
     enclave()->GetAgent(cpu)->Ping();
     return;
@@ -170,13 +174,15 @@ void RlScheduler::MigrateWithHint(RlTask* task, Cpu cpu, BarrierToken seqnum, Se
 
   uint32_t place;
   if (this->ReceiveAction(&place)) {
-    GHOST_DPRINT(2, stderr, "Failed to receive action hint in time. Doing default action.");
+    GHOST_DPRINT(2, stderr, 
+                  "Failed to receive action hint for %s in time. Doing default action.",
+                  task->gtid.describe());
     cs->run_queue.Enqueue(task);
     enclave()->GetAgent(cpu)->Ping();
     return;
   }
 
-  GHOST_DPRINT(2, stderr, "Enqueue task to place %d in the queue", place);
+  GHOST_DPRINT(2, stderr, "Enqueue task %s to place %d in the queue", task->gtid.describe(), place);
   // Make task visible in the new runqueue *after* changing the association
   // (otherwise the task can get oncpu while producing into the old queue).
   cs->run_queue.EnqueueTo(task, place);
@@ -213,6 +219,21 @@ void RlScheduler::UpdateTask(RlTask* task, std::ifstream& instream) {
     default:
       break;
     }
+  }
+}
+
+int RlScheduler::UpdateTaskFromStatFile(RlTask* task, pid_t tid) {
+  pid_t pid = pidOf(tid);
+  std::string stat_file_path = "/proc/" + std::to_string(pid) + "/task/" + std::to_string(tid) + "/stat";
+  GHOST_DPRINT(5, stderr, "Reading file %s", stat_file_path);
+  std::ifstream statFile(stat_file_path);
+  if (!statFile.is_open()) {
+    GHOST_DPRINT(3, stderr, "Failed to open /proc/%d/task/%d/stat", pid, tid);
+    return 1;
+  } else {
+    this->UpdateTask(task, statFile);
+    statFile.close();
+    return 0;
   }
 }
 
@@ -324,7 +345,7 @@ int SendSequence(std::vector<uint64_t>& sequence, uint16_t port) {
 
   struct timeval timeout;
   timeout.tv_sec = 0;
-  timeout.tv_usec = 1000;
+  timeout.tv_usec = 20000;
   if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) < 0) {
     GHOST_DPRINT(3, stderr, "Failed to set socket send timeout. SendSequence aborted.");
     return 1;
@@ -400,16 +421,8 @@ void RlScheduler::TaskNew(RlTask* task, const Message& msg) {
 
   if (task->NeedsInfoUpdate(msg)) {
     pid_t tid = Gtid(payload->gtid).tid();
-    pid_t pid = pidOf(tid);
-    std::string stat_file_path = "/proc/" + std::to_string(pid) + "/task/" + std::to_string(tid) + "/stat";
-    GHOST_DPRINT(4, stdout, "Reading file %s", stat_file_path);
-    std::ifstream statFile(stat_file_path);
-    if (!statFile.is_open()) {
-      GHOST_DPRINT(3, stderr, "Failed to open /proc/%d/task/%d/stat", pid, tid);
-    } else {
-      this->UpdateTask(task, statFile);
-      GHOST_DPRINT(4, stdout, "Updated task");
-      statFile.close();
+    if(this->UpdateTaskFromStatFile(task, tid) == 0) {
+      GHOST_DPRINT(4, stderr, "Updated task %s info successfully", task->gtid.describe());
     }
   }
 
@@ -435,15 +448,42 @@ void RlScheduler::TaskRunnable(RlTask* task, const Message& msg) {
   // tasks to make progress.
   task->prio_boost = !payload->deferrable;
 
+  if (task->NeedsInfoUpdate(msg)) {
+    pid_t tid = Gtid(payload->gtid).tid();
+    if(this->UpdateTaskFromStatFile(task, tid) == 0) {
+      GHOST_DPRINT(4, stderr, "Updated task %s info successfully", task->gtid.describe());
+    }
+  }
+
   if (task->cpu < 0) {
     // There cannot be any more messages pending for this task after a
     // MSG_TASK_WAKEUP (until the agent puts it oncpu) so it's safe to
     // migrate.
     Cpu cpu = AssignCpu(task);
-    Migrate(task, cpu, msg.seqnum());
+    MigrateWithHint(task, cpu, msg.seqnum(), SentCallbackType::kTaskRunnable);
   } else {
     CpuState* cs = cpu_state_of(task);
-    cs->run_queue.Enqueue(task);
+
+    if (this->ShareTask(task, SentCallbackType::kTaskRunnable, true)) {
+      GHOST_DPRINT(2, stderr, 
+                    "Failed to send information about actionable callback for %s. Doing default action.",
+                    task->gtid.describe());
+      cs->run_queue.Enqueue(task);
+      return;
+    }
+    uint32_t place;
+    if (this->ReceiveAction(&place)) {
+      GHOST_DPRINT(2, stderr, 
+                    "Failed to receive action hint for %s in time. Doing default action.",
+                    task->gtid.describe());
+      cs->run_queue.Enqueue(task);
+      return;
+    }
+
+    GHOST_DPRINT(2, stderr, "Enqueue task %s to place %d in the queue", task->gtid.describe(), place);
+    // Make task visible in the new runqueue *after* changing the association
+    // (otherwise the task can get oncpu while producing into the old queue).
+    cs->run_queue.EnqueueTo(task, place);
   }
 }
 
@@ -465,11 +505,26 @@ void RlScheduler::TaskDeparted(RlTask* task, const Message& msg) {
     enclave()->GetAgent(cpu)->Ping();
   }
 
+  // Not updating task data from statfile when task departs.
+
+  if (this->ShareTask(task, SentCallbackType::kTaskDeparted, false)) {
+    GHOST_DPRINT(2, stderr, 
+                  "Failed to send information about non-actionable callback for %s.",
+                  task->gtid.describe());
+  }
   allocator()->FreeTask(task);
 }
 
 void RlScheduler::TaskDead(RlTask* task, const Message& msg) {
   CHECK(task->blocked());
+
+  // Not updating task data from statfile when task dies.
+
+  if (this->ShareTask(task, SentCallbackType::kTaskDead, false)) {
+    GHOST_DPRINT(2, stderr, 
+                  "Failed to send information about non-actionable callback for %s.",
+                  task->gtid.describe());
+  }
   allocator()->FreeTask(task);
 }
 
@@ -653,9 +708,11 @@ void RlRq::EnqueueTo(RlTask* task, uint32_t place, bool respect_prio_boost) {
   absl::MutexLock lock(&mu_);
   if (respect_prio_boost && task->prio_boost) {
     rq_.push_front(task);
+    GHOST_DPRINT(4, stderr, "Inserted: task at head is %s", rq_[0]->gtid.describe());
   }
   else {
     rq_.insert(rq_.begin() + place, task);
+    GHOST_DPRINT(4, stderr, "Inserted: task at place %d is %s", place, rq_[place]->gtid.describe());
   }
 }
 

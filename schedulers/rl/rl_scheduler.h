@@ -22,6 +22,9 @@ enum class RlTaskState {
 // Other metrics should be explicitly discretized if needed.
 enum class SentCallbackType {
   kTaskNew,
+  kTaskRunnable,
+  kTaskDeparted,
+  kTaskDead,
 };
 
 // For CHECK and friends.
@@ -144,6 +147,8 @@ class RlScheduler : public BasicDispatchScheduler<RlTask> {
 
   // Update `task` with stat data from `instream` 
   void UpdateTask(RlTask* task, std::ifstream& instream);
+  // Find `task`'s statfile, read it and update `task` data
+  int UpdateTaskFromStatFile(RlTask* task, pid_t tid);
   // Share `task` via a socket
   int ShareTask(const RlTask* task, const SentCallbackType callback_type, bool action_expected);
   // Receive action hint via a socket
