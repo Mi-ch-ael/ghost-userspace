@@ -266,6 +266,18 @@ cc_binary(
 )
 
 cc_binary(
+    name = "yield_exp",
+    srcs = [
+        "tests/yield_exp.cc",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":base",
+        ":ghost",
+    ],
+)
+
+cc_binary(
     name = "cfs_test",
     testonly = 1,
     srcs = [

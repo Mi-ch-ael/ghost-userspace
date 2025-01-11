@@ -125,32 +125,6 @@ void RlScheduler::Migrate(RlTask* task, Cpu cpu, BarrierToken seqnum) {
   enclave()->GetAgent(cpu)->Ping();
 }
 
-void RlScheduler::MigrateWithTelemetry(RlTask* task, Cpu cpu, BarrierToken seqnum, SentCallbackType callback_type) {
-  CHECK_EQ(task->run_state, RlTaskState::kRunnable);
-  CHECK_EQ(task->cpu, -1);
-
-  CpuState* cs = cpu_state(cpu);
-  const Channel* channel = cs->channel.get();
-  CHECK(channel->AssociateTask(task->gtid, seqnum, /*status=*/nullptr));
-
-  GHOST_DPRINT(3, stderr, "Migrating task %s to cpu %d", task->gtid.describe(),
-               cpu.id());
-  task->cpu = cpu.id();
-
-  if (this->ShareTask(task, callback_type, false)) {
-    GHOST_DPRINT(2, stderr, 
-                  "Failed to send information about non-actionable callback for %s.",
-                  task->gtid.describe());
-  }
-
-  // Make task visible in the new runqueue *after* changing the association
-  // (otherwise the task can get oncpu while producing into the old queue).
-  cs->run_queue.Enqueue(task);
-
-  // Get the agent's attention so it notices the new task.
-  enclave()->GetAgent(cpu)->Ping();
-}
-
 void RlScheduler::MigrateWithHint(RlTask* task, Cpu cpu, BarrierToken seqnum, SentCallbackType callback_type) {
   CHECK_EQ(task->run_state, RlTaskState::kRunnable);
   CHECK_EQ(task->cpu, -1);
@@ -163,29 +137,7 @@ void RlScheduler::MigrateWithHint(RlTask* task, Cpu cpu, BarrierToken seqnum, Se
                cpu.id());
   task->cpu = cpu.id();
 
-  if (this->ShareTask(task, callback_type, true)) {
-    GHOST_DPRINT(2, stderr, 
-                  "Failed to send information about actionable callback for %s. Doing default action.",
-                  task->gtid.describe());
-    cs->run_queue.Enqueue(task);
-    enclave()->GetAgent(cpu)->Ping();
-    return;
-  }
-
-  uint32_t place;
-  if (this->ReceiveAction(&place)) {
-    GHOST_DPRINT(2, stderr, 
-                  "Failed to receive action hint for %s in time. Doing default action.",
-                  task->gtid.describe());
-    cs->run_queue.Enqueue(task);
-    enclave()->GetAgent(cpu)->Ping();
-    return;
-  }
-
-  GHOST_DPRINT(2, stderr, "Enqueue task %s to place %d in the queue", task->gtid.describe(), place);
-  // Make task visible in the new runqueue *after* changing the association
-  // (otherwise the task can get oncpu while producing into the old queue).
-  cs->run_queue.EnqueueTo(task, place);
+  cs->run_queue.EnqueueWithHint(task, this, callback_type);
 
   // Get the agent's attention so it notices the new task.
   enclave()->GetAgent(cpu)->Ping();
@@ -463,27 +415,12 @@ void RlScheduler::TaskRunnable(RlTask* task, const Message& msg) {
     MigrateWithHint(task, cpu, msg.seqnum(), SentCallbackType::kTaskRunnable);
   } else {
     CpuState* cs = cpu_state_of(task);
-
-    if (this->ShareTask(task, SentCallbackType::kTaskRunnable, true)) {
+    if (this->ShareTask(task, SentCallbackType::kTaskRunnable, false)) {
       GHOST_DPRINT(2, stderr, 
-                    "Failed to send information about actionable callback for %s. Doing default action.",
-                    task->gtid.describe());
-      cs->run_queue.Enqueue(task);
-      return;
+                  "Failed to send information about non-actionable callback for %s.",
+                  task->gtid.describe());
     }
-    uint32_t place;
-    if (this->ReceiveAction(&place)) {
-      GHOST_DPRINT(2, stderr, 
-                    "Failed to receive action hint for %s in time. Doing default action.",
-                    task->gtid.describe());
-      cs->run_queue.Enqueue(task);
-      return;
-    }
-
-    GHOST_DPRINT(2, stderr, "Enqueue task %s to place %d in the queue", task->gtid.describe(), place);
-    // Make task visible in the new runqueue *after* changing the association
-    // (otherwise the task can get oncpu while producing into the old queue).
-    cs->run_queue.EnqueueTo(task, place);
+    cs->run_queue.Enqueue(task);
   }
 }
 
@@ -534,8 +471,15 @@ void RlScheduler::TaskYield(RlTask* task, const Message& msg) {
 
   TaskOffCpu(task, /*blocked=*/false, payload->from_switchto);
 
+  if (task->NeedsInfoUpdate(msg)) {
+    pid_t tid = Gtid(payload->gtid).tid();
+    if(this->UpdateTaskFromStatFile(task, tid) == 0) {
+      GHOST_DPRINT(4, stderr, "Updated task %s info successfully", task->gtid.describe());
+    }
+  }
+
   CpuState* cs = cpu_state_of(task);
-  cs->run_queue.Enqueue(task);
+  cs->run_queue.EnqueueWithHint(task, this, SentCallbackType::kTaskYield);
 
   if (payload->from_switchto) {
     Cpu cpu = topology()->cpu(payload->cpu);
@@ -716,12 +660,57 @@ void RlRq::EnqueueTo(RlTask* task, uint32_t place, bool respect_prio_boost) {
   }
 }
 
+void ghost::RlRq::EnqueueWithHint(RlTask *task, RlScheduler* communicator, 
+                                  SentCallbackType callback_type, bool respect_prio_boost) {
+  CHECK_GE(task->cpu, 0);
+  CHECK_EQ(task->run_state, RlTaskState::kRunnable);
+
+  task->run_state = RlTaskState::kQueued;
+
+  absl::MutexLock lock(&mu_);
+  if (communicator->ShareTask(task, callback_type, true)) {
+    GHOST_DPRINT(2, stderr, 
+                  "Failed to send information about actionable callback for %s. Doing default action.",
+                  task->gtid.describe());
+    if (task->prio_boost) {
+      rq_.push_front(task);
+    }
+    else {
+      rq_.push_back(task);
+    }
+    return;
+  }
+  uint32_t place;
+  if (communicator->ReceiveAction(&place)) {
+    GHOST_DPRINT(2, stderr, 
+                  "Failed to receive action hint for %s in time. Doing default action.",
+                  task->gtid.describe());
+    if (task->prio_boost) {
+      rq_.push_front(task);
+    }
+    else {
+      rq_.push_back(task);
+    }
+    return;
+  }
+
+  GHOST_DPRINT(2, stderr, "Enqueue task %s to place %d in the queue", task->gtid.describe(), place);
+  if (respect_prio_boost && task->prio_boost) {
+    rq_.push_front(task);
+    GHOST_DPRINT(4, stderr, "Inserted: task at head is %s", rq_[0]->gtid.describe());
+  }
+  else {
+    rq_.insert(rq_.begin() + place, task);
+    GHOST_DPRINT(4, stderr, "Inserted: task at place %d is %s", place, rq_[place]->gtid.describe());
+  }
+}
+
 RlTask* RlRq::Dequeue() {
   absl::MutexLock lock(&mu_);
   if (rq_.empty()) return nullptr;
 
   RlTask* task = rq_.front();
-  CHECK(task->queued());
+  CHECK(task->queued()) << task->gtid.describe();
   task->run_state = RlTaskState::kRunnable;
   rq_.pop_front();
   return task;

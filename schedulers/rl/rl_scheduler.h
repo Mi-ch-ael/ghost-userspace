@@ -25,7 +25,10 @@ enum class SentCallbackType {
   kTaskRunnable,
   kTaskDeparted,
   kTaskDead,
+  kTaskYield,
 };
+
+class RlScheduler;
 
 // For CHECK and friends.
 std::ostream& operator<<(std::ostream& os, const RlTaskState& state);
@@ -92,6 +95,9 @@ class RlRq {
   // This is used to apply RL scheduling decisions. `place` must not be more than queue size.
   // If `respect_prio_boost` is `true`, prio-boosted tasks will still be pushed to the front of runqueue.
   void EnqueueTo(RlTask* task, uint32_t place, bool respect_prio_boost = true);
+
+  void EnqueueWithHint(RlTask* task, RlScheduler* communicator, 
+                        SentCallbackType callback_type, bool respect_prio_boost = true);
 
   // Erase 'task' from the runqueue.
   //
@@ -173,7 +179,6 @@ class RlScheduler : public BasicDispatchScheduler<RlTask> {
   void TaskOffCpu(RlTask* task, bool blocked, bool from_switchto);
   void TaskOnCpu(RlTask* task, Cpu cpu);
   void Migrate(RlTask* task, Cpu cpu, BarrierToken seqnum);
-  void MigrateWithTelemetry(RlTask* task, Cpu cpu, BarrierToken seqnum, SentCallbackType callback_type);
   void MigrateWithHint(RlTask* task, Cpu cpu, BarrierToken seqnum, SentCallbackType callback_type);
   Cpu AssignCpu(RlTask* task);
   void DumpAllTasks();
