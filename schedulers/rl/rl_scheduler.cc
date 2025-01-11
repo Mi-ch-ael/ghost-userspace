@@ -493,6 +493,19 @@ void RlScheduler::TaskBlocked(RlTask* task, const Message& msg) {
 
   TaskOffCpu(task, /*blocked=*/true, payload->from_switchto);
 
+  if (task->NeedsInfoUpdate(msg)) {
+    pid_t tid = Gtid(payload->gtid).tid();
+    if(this->UpdateTaskFromStatFile(task, tid) == 0) {
+      GHOST_DPRINT(4, stderr, "Updated task %s info successfully", task->gtid.describe());
+    }
+  }
+
+  if (this->ShareTask(task, SentCallbackType::kTaskBlocked, false)) {
+    GHOST_DPRINT(2, stderr, 
+                  "Failed to send information about non-actionable callback for %s.",
+                  task->gtid.describe());
+  }
+
   if (payload->from_switchto) {
     Cpu cpu = topology()->cpu(payload->cpu);
     enclave()->GetAgent(cpu)->Ping();
@@ -507,8 +520,16 @@ void RlScheduler::TaskPreempted(RlTask* task, const Message& msg) {
 
   task->preempted = true;
   task->prio_boost = true;
+
+  if (task->NeedsInfoUpdate(msg)) {
+    pid_t tid = Gtid(payload->gtid).tid();
+    if(this->UpdateTaskFromStatFile(task, tid) == 0) {
+      GHOST_DPRINT(4, stderr, "Updated task %s info successfully", task->gtid.describe());
+    }
+  }
+
   CpuState* cs = cpu_state_of(task);
-  cs->run_queue.Enqueue(task);
+  cs->run_queue.EnqueueWithHint(task, this, SentCallbackType::kTaskPreempted);
 
   if (payload->from_switchto) {
     Cpu cpu = topology()->cpu(payload->cpu);

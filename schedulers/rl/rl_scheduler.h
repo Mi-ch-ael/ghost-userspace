@@ -26,6 +26,8 @@ enum class SentCallbackType {
   kTaskDeparted,
   kTaskDead,
   kTaskYield,
+  kTaskBlocked,
+  kTaskPreempted,
 };
 
 class RlScheduler;
