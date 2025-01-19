@@ -1,17 +1,52 @@
 # Work in progress: окружение для обучения RL-агентов на основе ghOSt и Gymnasium
 
+## Содержание
+
+1. [Пререквизиты](/README.md#пререквизиты)
+2. [Сборка](/README.md#сборка)
+3. [Тесты](/README.md#тесты)
+4. [Запуск среды](/README.md#запуск-среды)
+
 ## Пререквизиты
 
-* [ghOSt-kernel](https://github.com/google/ghost-kernel) ([скрипт](https://gist.github.com/Mi-ch-ael/015c8c731ad357218405d1af79fbd238) установки ядра на Ubuntu 20.04);
-* Bazel: [Bazel Installation Guide](https://docs.bazel.build/versions/main/install.html)
-* Apt-пакеты: `libnuma-dev libcap-dev libelf-dev libbfd-dev gcc clang-12 llvm zlib1g-dev python-is-python3` (подробно в оригинальном README ниже)
-* Python-пакеты из `requirements.txt`: `pip install -r requirements.txt`
+* Виртуальная машина Ubuntu 20.04;
+* Ядро ghOSt [ghOSt-kernel](https://github.com/google/ghost-kernel). ghOSt-kernel можно установить автоматически [скриптом](https://gist.github.com/Mi-ch-ael/015c8c731ad357218405d1af79fbd238) установки ядра. Краткая инструкция к скрипту приведена в комментариях в начале скрипта;
+* Bazel: [Bazel Installation Guide](https://docs.bazel.build/versions/main/install.html);
+* Apt-пакеты: `libnuma-dev libcap-dev libelf-dev libbfd-dev gcc clang-12 llvm zlib1g-dev python-is-python3` (подробно в [оригинальном README](/README.md#оригинальный-readme-для-справки) ниже);
+* Pip: [Pip installation](https://pip.pypa.io/en/stable/installation/);
+* Склонировать этот репозиторий и перейти на ветку dev: `git checkout dev`;
+* Рекомендуется создать Python venv: `python3 -m venv <путь к директории, где будет расположена виртуальная среда>`.
 
-## Сборка и запуск
+Набор команд для установки юзерспейса (то есть всё, что после успешной установки ядра) может быть таким:
+```
+curl -G -L https://github.com/bazelbuild/bazelisk/releases/download/v1.25.0/bazelisk-linux-amd64 -o bazelisk
+sudo mv bazelisk /usr/local/bin/bazel
+chmod +x /usr/local/bin/bazel
 
-#### Юнит-тесты
+sudo apt update
+sudo apt install libnuma-dev libcap-dev libelf-dev libbfd-dev gcc clang-12 llvm zlib1g-dev python-is-python3
 
-Юнит-тесты среды обучения не требуют установки большинства компонентов. Для запуска тестов в проекте используется Bazel,
+git clone https://github.com/Mi-ch-ael/ghost-userspace.git && cd ghost-userspace
+git checkout dev
+echo "5.1.0" > .bazelversion
+sudo apt install python3.8-venv
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+## Сборка
+
+Сборка планировщика: `bazel build rl_scheduler_agent`. В случае проблем со сборкой см. [issue в репозитории](https://github.com/google/ghost-userspace/issues/3).
+
+Сборка бинарников с тестовыми нагрузками: `bazel build simple_exp single_exp depart_exp yield_exp`
+
+Установка зависимостей кода на Python не делается bazel'ем, их нужно установить вручную: `pip install -r requirements.txt`
+
+## Тесты
+
+#### Юнит-тесты и интеграционные тесты среды
+
+Тесты среды обучения не требуют установки большинства компонентов. Для запуска тестов в проекте используется Bazel,
 но технически можно запустить тесты и напрямую.
 Для запуска одного файла с тестами используется команда:
 ```
@@ -23,80 +58,41 @@ $ bazel test //rl_env/tests:scheduler_env_tests --test_output=all
 ```
 Запуск всех тестов сразу:
 ```
-$ bazel test //rl_env/tests:all_tests --test_output=all
+$ bazel test //rl_env/tests:all_tests --test_output=all --flaky_test_attempts=3
 ```
 
-#### Компоненты ghOSt
+Если запускать тесты несколько раз, не внося изменений в код, результаты успешных прогонов тестов кешируются и тесты заново не прогоняются. Для того, чтобы
+явно заставить тесты запуститься, можно добавить в команду запуска тестов флаг `--nocache_test_results`.
 
-Сборка используемых компонентов ghOSt-userspace:
+#### Сквозной тест
+
+Сквозной тест `rl_env/demo.py` устарел -- он был предназначен для среды, реагирующей только на появление новых задач.
+
+## Запуск среды
+
+Запуск планировщика, среды и простейшей заглушки вместо RL-агента осуществляется скриптом `rl_env/launch.py`. Скрипт нужно запускать от рута. Если используется venv, не забудьте активировать venv в консоли рута:
 ```
-$ bazel build single_exp
-$ bazel build rl_scheduler_agent
+$ sudo su
+# source .venv/bin/activate # Измените путь в соответствии с расположением venv у себя
 ```
-Здесь `single_exp` - нагрузка (задачи, которые будут выполняться на планировщике),
-`rl_scheduler_agent` - управляющий агент планировщика (также соберёт планировщик).
 
-#### Объединённый пример
-
-Пример 1 - создание среды, запуск компонентов ghOSt, использование среды клиентским кодом и чтение результатов наблюдений - в файле `rl_env/main.py`.
-Запуск от рута (если используется venv, не забудьте активировать её в консоли рута тоже):
+При запуске `launch.py` можно указать параметры среды и параметры запуска планировщика (при первом запуске обычно не нужно). 
+Для просмотра доступных параметров:
 ```
-# cd rl_env && python main.py
+# python3 rl_env/launch.py --help
 ```
-Примерный вывод:
+
+Собственно запуск среды, агента-заглушки и планировщика:
 ```
-SchedulerEnv._get_raw_metrics: Connected by address: ('127.0.0.1', 53296)
-SchedulerEnv._get_raw_metrics: unpacked length: 15
-/home/ghostling/sambashare/ghost-userspace/.venv/lib/python3.8/site-packages/gymnasium/utils/passive_env_checker.py:143: UserWarning: WARN: The obs returned by the `reset()` method was expecting a tuple, actual type: <class 'list'>
-  logger.warn(f"{pre} was expecting a tuple, actual type: {type(obs)}")
-/home/ghostling/sambashare/ghost-userspace/.venv/lib/python3.8/site-packages/gymnasium/utils/passive_env_checker.py:131: UserWarning: WARN: The obs returned by the `reset()` method was expecting a numpy array, actual type: <class 'float'>
-  logger.warn(
-/home/ghostling/sambashare/ghost-userspace/.venv/lib/python3.8/site-packages/gymnasium/spaces/box.py:240: UserWarning: WARN: Casting input x to numpy array.
-  gym.logger.warn("Casting input x to numpy array.")
-/home/ghostling/sambashare/ghost-userspace/.venv/lib/python3.8/site-packages/gymnasium/utils/passive_env_checker.py:159: UserWarning: WARN: The obs returned by the `reset()` method is not within the observation space.
-  logger.warn(f"{pre} is not within the observation space.")
-/home/ghostling/sambashare/ghost-userspace/.venv/lib/python3.8/site-packages/gymnasium/utils/passive_env_checker.py:127: UserWarning: WARN: The obs returned by the `reset()` method should be an int or np.int64, actual type: <class 'float'>
-  logger.warn(f"{pre} should be an int or np.int64, actual type: {type(obs)}")
-Reset environment and got initial observation: {'callback_type': 0, 'task_metrics': {'run_state': 2, 'cpu_num': 0, 'preempted': 0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 16.0}, 'runqueue': [{'run_state': 2, 'cpu_num': 0, 'preempted': 0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 16.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}]}
-SchedulerEnv._get_raw_metrics: Connected by address: ('127.0.0.1', 53300)
-SchedulerEnv._get_raw_metrics: unpacked length: 15
-/home/ghostling/sambashare/ghost-userspace/.venv/lib/python3.8/site-packages/gymnasium/utils/passive_env_checker.py:143: UserWarning: WARN: The obs returned by the `step()` method was expecting a tuple, actual type: <class 'list'>
-  logger.warn(f"{pre} was expecting a tuple, actual type: {type(obs)}")
-/home/ghostling/sambashare/ghost-userspace/.venv/lib/python3.8/site-packages/gymnasium/utils/passive_env_checker.py:131: UserWarning: WARN: The obs returned by the `step()` method was expecting a numpy array, actual type: <class 'float'>
-  logger.warn(
-/home/ghostling/sambashare/ghost-userspace/.venv/lib/python3.8/site-packages/gymnasium/utils/passive_env_checker.py:159: UserWarning: WARN: The obs returned by the `step()` method is not within the observation space.
-  logger.warn(f"{pre} is not within the observation space.")
-/home/ghostling/sambashare/ghost-userspace/.venv/lib/python3.8/site-packages/gymnasium/utils/passive_env_checker.py:127: UserWarning: WARN: The obs returned by the `step()` method should be an int or np.int64, actual type: <class 'float'>
-  logger.warn(f"{pre} should be an int or np.int64, actual type: {type(obs)}")
-Made a step and got observation: {'callback_type': 0, 'task_metrics': {'run_state': 2, 'cpu_num': 1, 'preempted': 0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 16.0}, 'runqueue': [{'run_state': 2, 'cpu_num': 1, 'preempted': 0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 16.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}, {'run_state': 0.0, 'cpu_num': 0.0, 'preempted': 0.0, 'utime': 0.0, 'stime': 0.0, 'guest_time': 0.0, 'vsize': 0.0}]}
----stdout of scheduler---
-Initializing...
-Initialization complete, ghOSt active.
-
-Done!
-
----end stdout of scheduler---
----stderr of scheduler---
-Received action #0
-Failed to bind socket. Skipped event. Awaiting termination.
-
----end stderr of scheduler---
----stdout of single_exp---
-SimpleExp
-
-Starting simple worker
-
-Finished simple worker
- took 18.85 ms
-
----end stdout of single_exp---
----stderr of single_exp---
-hello world!
-fantastic nap!
-
----end stderr of single_exp---
+# python3 rl_env/launch.py <необязательные аргументы>
 ```
-Вывод содержит время выполнения нагрузки, в данном случае 18.85 мс. У взятого за образец fifo та же нагрузка выполняется (грубо) за 12-17 мс.
+
+Для прерывания всех компонентов нажмите Ctrl+C.
+
+Нагрузка запускается отдельно, в другой консоли:
+```
+$ bazel-bin/single_exp # Можно подставить другую нагрузку из собранных
+```
 
 В случае возникновения проблем можно удалить оставшиеся с прошлых запусков планировщика анклавы вручную:
 ```
@@ -109,49 +105,7 @@ ctl  enclave_1	version
 # for i in /sys/fs/ghost/enclave_*/ctl; do echo destroy > $i; done
 ```
 
-Пример 2 - тест общения в одну сторону (сообщения от планировщика среде):
-```
-$ git checkout a8efd225185abdd1be8eb9a2fb604e620eab927e
-$ bazel build rl_scheduler_agent
-$ cd rl_env
-# python scheduler_plus_environment.py
-```
-Примерный вывод:
-```
-SchedulerEnv._get_raw_metrics: Connected by address: ('127.0.0.1', 58382)
-SchedulerEnv._get_raw_metrics: unpacked length: 15
-SchedulerEnv._get_raw_metrics: Connected by address: ('127.0.0.1', 58384)
-SchedulerEnv._get_raw_metrics: unpacked length: 15
----stdout of scheduler---
-Initializing...
-Initialization complete, ghOSt active.
-
-Done!
-
----end stdout of scheduler---
----stderr of scheduler---
-
----end stderr of scheduler---
----stdout of single_exp---
-SimpleExp
-
-Starting simple worker
-
-Finished simple worker
- took 17.00 ms
-
----end stdout of single_exp---
----stderr of single_exp---
-hello world!
-fantastic nap!
-
----end stderr of single_exp---
-.
-----------------------------------------------------------------------
-Ran 1 test in 2.051s
-
-OK
-```
+Если старые анклавы не удалить, новый экземпляр планировщика не будет запускаться.
 
 ---
 ### Оригинальный README для справки
